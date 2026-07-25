@@ -18,6 +18,14 @@ https://github.com/gemini114514/comic-orb
 
 然后点击“安装”即可。
 
+首次安装还需要启用仓库随附的正式服务端插件：
+
+1. 打开已安装的 `comic-orb` 扩展目录；
+2. Windows 双击 `install-server-plugin.bat`；Linux/macOS 在该目录执行 `sh install-server-plugin.sh /你的/SillyTavern/目录`；
+3. 完全重启 SillyTavern。
+
+安装器只会把本仓库中的 `server-plugins/comic-orb` 链接到 SillyTavern 官方 `plugins` 目录、备份 `config.yaml`，并开启官方的 `enableServerPlugins` 开关。浏览器扩展安装器按 SillyTavern 的安全设计不能自行执行服务端代码，因此这一步只需人工确认一次；以后正常更新漫画球无需再次安装。
+
 ### 本地安装
 
 下载仓库，把整个 `comic-orb` 文件夹放到：
@@ -26,7 +34,9 @@ https://github.com/gemini114514/comic-orb
 SillyTavern/public/scripts/extensions/third-party/comic-orb
 ```
 
-重启 SillyTavern 并刷新浏览器。右下角出现铅笔悬浮球即安装成功。
+随后运行同目录的服务端插件安装脚本并完全重启 SillyTavern。右下角出现铅笔悬浮球，且主页“后端路由”显示就绪，即安装成功。
+
+如需卸载服务端部分，Windows 双击 `uninstall-server-plugin.bat`；Linux/macOS 执行 `sh uninstall-server-plugin.sh /你的/SillyTavern/目录`。卸载器只移除漫画球链接，不会关闭其他服务端插件。
 
 ## 第一次配置
 
@@ -140,8 +150,11 @@ manifest.json            SillyTavern 扩展清单
 tag-cleanup-preset.json  通用标签清理正则
 LICENSE.md               CC BY-NC-SA 4.0 许可说明
 README.md                本文档
+server-plugins/comic-orb 正式服务端中继插件
+install-server-plugin.*  服务端插件安装器（Windows / Unix）
+uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 ```
 
 ## 版本
 
-当前版本：`1.23.0`
+当前版本：`1.24.0`

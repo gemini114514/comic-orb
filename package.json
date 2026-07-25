@@ -1,6 +1,6 @@
 {
   "name": "sillytavern-comic-orb",
-  "version": "1.23.0",
+  "version": "1.24.0",
   "description": "SillyTavern comic workflow orb with independent adaptation, storyboard and drawing APIs.",
   "type": "module",
   "main": "index.js",
@@ -13,7 +13,14 @@
     "manifest.json",
     "tag-cleanup-preset.json",
     "README.md",
-    "LICENSE.md"
+    "LICENSE.md",
+    "server-plugins/",
+    "install-server-plugin.bat",
+    "install-server-plugin.ps1",
+    "install-server-plugin.sh",
+    "uninstall-server-plugin.bat",
+    "uninstall-server-plugin.ps1",
+    "uninstall-server-plugin.sh"
   ],
   "author": "gemini114514",
   "contributors": [

@@ -8,6 +8,7 @@
 
     const ROOT_ID = 'comic-orb-root';
     const STYLE_ID = 'comic-orb-style';
+    const SERVER_PLUGIN_API = '/api/plugins/comic-orb';
     const STORE_KEY = 'comic-orb.settings.v1';
     const DB_NAME = 'comic-orb-assets';
     const THINKING_NAMES = 'thinking|think|reasoning|analysis';
@@ -479,6 +480,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let cacheReaderRenderToken = 0;
     let imageCacheQueue = Promise.resolve();
     let pendingAiRegexRules = [];
+    let serverPluginProbe = { checkedAt: 0, ready: false, data: null, error: '' };
 
     function safeJson(text, fallback = {}) { try { return text ? JSON.parse(text) : fallback; } catch { return fallback; } }
     function newId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -690,9 +692,43 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!ctx) throw new Error('未找到 SillyTavern.getContext()，请在酒馆页面内加载脚本');
         return ctx;
     }
+    async function probeServerPlugin(force = false) {
+        if (!force && Date.now() - serverPluginProbe.checkedAt < 10000) {
+            if (serverPluginProbe.ready) return serverPluginProbe.data;
+            throw new Error(serverPluginProbe.error || 'Comic Orb Server Plugin 未加载');
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+            const response = await fetch(`${SERVER_PLUGIN_API}/status`, { method: 'GET', signal: controller.signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            if (!data?.ready || data?.service !== 'comic-orb-server-plugin') throw new Error('响应不是 Comic Orb Server Plugin');
+            serverPluginProbe = { checkedAt: Date.now(), ready: true, data, error: '' };
+            return data;
+        } catch (error) {
+            const reason = error.name === 'AbortError' ? '检测超时' : error.message;
+            serverPluginProbe = { checkedAt: Date.now(), ready: false, data: null, error: reason };
+            throw new Error(reason);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+    async function requireServerPluginReady() {
+        try { return await probeServerPlugin(); }
+        catch (error) { throw new Error(`Comic Orb Server Plugin 未加载（${error.message}）。请运行漫画球目录中的 install-server-plugin.bat，并完全重启 SillyTavern`); }
+    }
     async function checkLocalProxyStatus() {
         const box = document.querySelector(`#${ROOT_ID} #co-proxy-health`); const text = document.querySelector(`#${ROOT_ID} #co-proxy-health-text`);
         if (!box || !text) return false;
+        box.className = 'co-proxy-health co-proxy-checking'; text.textContent = '正在检测 Comic Orb Server Plugin…';
+        let relay;
+        try { relay = await probeServerPlugin(true); }
+        catch (error) {
+            box.className = 'co-proxy-health co-proxy-error';
+            text.textContent = `漫画球后端插件未加载（${error.message}）。运行漫画球目录中的 install-server-plugin.bat，然后完全重启 SillyTavern；只刷新网页无效。`;
+            return false;
+        }
         if (isLocalGeminiWebConfig(settings.drawing)) {
             box.className = 'co-proxy-health co-proxy-checking'; text.textContent = '正在检测本地 Gemini 会话、Cookie Jar 与保活状态…';
             try {
@@ -724,34 +760,18 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 return false;
             }
         }
-        if (!['images', 'edits'].includes(String(settings.drawing.mode || 'images'))) {
-            box.className = 'co-proxy-health co-proxy-ready';
-            text.textContent = `当前为 ${settings.drawing.mode === 'chat' ? 'Chat 多模态' : 'Gemini 原生'}模式，直接调用所选 API，不需要酒馆 images 长任务代理。`;
-            return true;
-        }
         if (settings.drawing.useLocalProxy === false) {
-            box.className = 'co-proxy-health co-proxy-disabled'; text.textContent = '本地长任务代理已在当前绘画 API 实例中关闭；超过约300秒的图片请求可能在浏览器端断开。'; return false;
+            box.className = 'co-proxy-health co-proxy-disabled'; text.textContent = `Comic Orb Server Plugin v${relay.version || '?'} 已就绪；当前绘画实例关闭了长任务图片代理，超过约300秒的图片请求可能在浏览器端断开。`; return true;
         }
-        box.className = 'co-proxy-health co-proxy-checking'; text.textContent = '正在检测600秒后端代理路由…';
-        try {
-            const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 5000);
-            let response;
-            try { response = await fetch('/api/openai/comic-orb-image/status', { method: 'GET', signal: controller.signal }); }
-            finally { clearTimeout(timer); }
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const data = await response.json(); if (!data?.ready) throw new Error('响应未声明 ready');
-            box.className = 'co-proxy-health co-proxy-ready'; text.textContent = `600秒后端代理已就绪（允许上限 ${data.max_timeout_seconds || 1800} 秒${data.client_cancel_propagates ? '，支持取消上游请求' : ''}）`;
-            return true;
-        } catch (error) {
-            box.className = 'co-proxy-health co-proxy-error';
-            text.textContent = `本地长任务代理未加载（${error.name === 'AbortError' ? '检测超时' : error.message}）。必须完全重启 SillyTavern 后端；只刷新网页无效。重启前不要发起慢速绘画任务。`;
-            return false;
-        }
+        box.className = 'co-proxy-health co-proxy-ready';
+        text.textContent = `Comic Orb Server Plugin v${relay.version || '?'} 已就绪（默认 ${relay.default_timeout_seconds || 600} 秒，允许上限 ${relay.max_timeout_seconds || 1800} 秒${relay.client_cancel_propagates ? '，支持取消上游请求' : ''}）`;
+        return true;
     }
     function drawingUsesLocalProxy(conf = settings.drawing) { return conf.useLocalProxy !== false && ['images', 'edits'].includes(String(conf.mode || 'images')); }
     async function requireLocalProxyReady(conf = settings.drawing) {
+        await requireServerPluginReady();
         if (!drawingUsesLocalProxy(conf)) return;
-        if (!await checkLocalProxyStatus()) throw new Error('600秒绘画代理路由未就绪，请完整重启 SillyTavern 后端后重新检测');
+        if (isLocalGeminiWebConfig(conf) && !await checkLocalProxyStatus()) throw new Error('本地 Gemini 服务未就绪，请检查会话状态');
     }
     function normalizeEndpoint(base, path) {
         const cleanBase = String(base || '').trim().replace(/\/+$/, '');
@@ -905,6 +925,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     async function providerApiFetch(conf, url, options, operation = 'API 请求', validateResponse = null) {
         if (!shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse);
+        await requireServerPluginReady();
         const requestHeaders = Object.fromEntries(new Headers(options?.headers || {}).entries());
         delete requestHeaders.authorization;
         delete requestHeaders['content-type'];
@@ -927,7 +948,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             'Content-Type': 'application/json',
             ...(conf?.apiKey ? { 'X-Comic-Orb-Api-Key': conf.apiKey } : {}),
         };
-        return apiFetch('/api/openai/comic-orb-api', {
+        return apiFetch(`${SERVER_PLUGIN_API}/provider`, {
             method: 'POST',
             headers: localHeaders,
             body: JSON.stringify(payload),
@@ -2103,6 +2124,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return drawingResult(data, conf, finalPrompt, options);
     }
     async function callDrawingThroughLocalProxy(conf, protocol, fields, referenceList, options = {}) {
+        await requireServerPluginReady();
         const timeoutSeconds = Math.max(60, Math.min(1800, Number(conf.requestTimeoutSeconds) || 600));
         const operation = options.test ? `绘画 API 测试（${protocol === 'edits' ? 'Edits' : 'Generations'} · 本地${timeoutSeconds}秒代理）` : `绘画生成 · 第 ${options.pageNumber || 1} 页（${protocol === 'edits' ? `Edits，${referenceList.length} 张参考图` : 'Generations'} · 本地${timeoutSeconds}秒代理）`;
         const customHeaders = safeJson(conf.extraHeaders, null);
@@ -2113,7 +2135,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             references: referenceList.map((reference, index) => ({ dataUrl: reference.dataUrl, name: reference.name || `reference-${index + 1}.png` })),
         };
         const localHeaders = { ...context().getRequestHeaders(), ...(conf.apiKey ? { 'X-Comic-Orb-Api-Key': conf.apiKey } : {}) };
-        const data = await apiFetch('/api/openai/comic-orb-image', { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload);
+        const data = await apiFetch(`${SERVER_PLUGIN_API}/image`, { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload);
         return drawingResult(data, conf, fields.prompt, options);
     }
     async function callDrawing(prompt, options = {}) {
