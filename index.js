@@ -487,6 +487,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let imageCacheQueue = Promise.resolve();
     let pendingAiRegexRules = [];
     let serverPluginProbe = { checkedAt: 0, ready: false, data: null, error: '' };
+    let comicMediaObserver = null;
+    let comicMediaDecorationQueued = false;
 
     function safeJson(text, fallback = {}) { try { return text ? JSON.parse(text) : fallback; } catch { return fallback; } }
     function newId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -2358,11 +2360,23 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             url: cleanUrl,
             title: `${COMIC_MEDIA_TITLE_PREFIX}cache=${cacheId};page=${page}`,
             alt: `${insertConf.alt || 'AI 漫画'} · 第 ${page} 页`,
+            comic_orb: { version: 1, cacheId, page },
         };
     }
-    function comicMediaInfo(attachment) {
+    function comicMediaInfo(attachment, msg = null) {
+        const embedded = attachment?.comic_orb;
+        if (embedded && String(embedded.cacheId || '') && Number.isInteger(Number(embedded.page)) && Number(embedded.page) > 0) {
+            return { cacheId: String(embedded.cacheId), page: Number(embedded.page) };
+        }
         const match = String(attachment?.title || '').match(/^comic-orb:image;cache=([^;]+);page=(\d+)$/);
-        return match ? { cacheId: match[1], page: Number(match[2]) } : null;
+        if (match) return { cacheId: match[1], page: Number(match[2]) };
+        const attachmentUrl = String(attachment?.url || '').replace(/#comic-orb-cache=[^\s)]+$/, '');
+        const fallback = Array.isArray(msg?.extra?.comic_orb?.pages)
+            ? msg.extra.comic_orb.pages.find(item => String(item?.url || '').replace(/#comic-orb-cache=[^\s)]+$/, '') === attachmentUrl)
+            : null;
+        return fallback && String(fallback.cacheId || '') && Number(fallback.page) > 0
+            ? { cacheId: String(fallback.cacheId), page: Number(fallback.page) }
+            : null;
     }
     function removeLegacyComicMarkdown(value, insertConf = settings.insert) {
         const current = String(value || '');
@@ -2388,7 +2402,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function writeComicMedia(msg, items, insertConf = settings.insert) {
         if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
-        const retained = Array.isArray(msg.extra.media) ? msg.extra.media.filter(attachment => !comicMediaInfo(attachment)) : [];
+        const retained = Array.isArray(msg.extra.media) ? msg.extra.media.filter(attachment => !comicMediaInfo(attachment, msg)) : [];
         const attachments = items.map((item, index) => comicMediaAttachment(item, index, insertConf));
         msg.extra.media = [...retained, ...attachments];
         msg.extra.media_display = 'list';
@@ -2397,7 +2411,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             version: 1,
             marker: String(insertConf.marker || '<!-- comic-orb -->'),
             pages: attachments.map(attachment => {
-                const info = comicMediaInfo(attachment);
+                const info = comicMediaInfo(attachment, msg);
                 return { cacheId: info.cacheId, page: info.page, url: attachment.url };
             }),
         };
@@ -2429,7 +2443,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             writeComicMedia(msg, items, insertConf);
             await freshCtx.saveChat();
             const savedMedia = Array.isArray(freshCtx.chat[floor]?.extra?.media) ? freshCtx.chat[floor].extra.media : [];
-            const savedIds = new Set(savedMedia.map(comicMediaInfo).filter(Boolean).map(info => info.cacheId));
+            const savedIds = new Set(savedMedia.map(attachment => comicMediaInfo(attachment, freshCtx.chat[floor])).filter(Boolean).map(info => info.cacheId));
             const missingCacheId = items.find(item => item.cacheId && !savedIds.has(String(item.cacheId)));
             if (missingCacheId) throw new Error(`第 ${floor} 层保存后校验失败：缺少漫画缓存标识 ${missingCacheId.cacheId}`);
             refreshMessageIfRendered(freshCtx, floor, msg);
@@ -2444,7 +2458,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
             if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
             if (Array.isArray(msg.extra.media)) {
-                const mediaIndex = msg.extra.media.findIndex(attachment => comicMediaInfo(attachment)?.cacheId === String(oldCacheId));
+                const mediaIndex = msg.extra.media.findIndex(attachment => comicMediaInfo(attachment, msg)?.cacheId === String(oldCacheId));
                 if (mediaIndex >= 0) {
                     msg.extra.media[mediaIndex] = comicMediaAttachment(item, Number(item.page || 1) - 1, insertConf);
                     if (Array.isArray(msg.extra.comic_orb?.pages)) {
@@ -2616,8 +2630,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const source = String(msg?.mes || '');
         const marker = String(settings.insert?.marker || '').trim();
         return Boolean(
-            Array.isArray(msg?.extra?.media) && msg.extra.media.some(attachment => comicMediaInfo(attachment))
-            || Array.isArray(msg?.extra?.comic_orb?.pages) && msg.extra.comic_orb.pages.length
+            Array.isArray(msg?.extra?.media) && msg.extra.media.some(attachment => comicMediaInfo(attachment, msg))
             || (marker && source.includes(marker))
             || /<!--\s*comic-orb(?::image|-pages)?\b/i.test(source)
             || /#comic-orb-cache=/i.test(source)
@@ -2736,7 +2749,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           </div></div>
           <div class="co-page" data-page="settings">
             <div class="co-callout"><strong>基础模式与完整模式</strong><br>基础模式安装扩展后立即可用，API 请求由当前浏览器直接发送；约 300 秒以上的请求可能被浏览器、酒馆入口或中间代理断开，并取决于 API 是否允许浏览器跨域。完整模式通过酒馆主机上的服务端组件中继，支持最长 1800 秒、参考图 Multipart 和取消上游请求。模式会随每个后台任务冻结，运行中切换不会改变已经提交的任务。</div>
-            <label class="co-check co-debug-toggle"><input id="co-enable-redraw" type="checkbox" ${settings.interaction.doubleClickRedraw ? 'checked' : ''}>正文漫画图双击打开“重绘 / 实际提示词”详情弹窗</label>
+            <label class="co-check co-debug-toggle"><input id="co-enable-redraw" type="checkbox" ${settings.interaction.doubleClickRedraw ? 'checked' : ''}>显示正文漫画的“漫画操作”按钮（手机与桌面单击可用）</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-immediate-work" type="checkbox" ${settings.interaction.doubleClickImmediate !== false ? 'checked' : ''}>双击无图片的非User对话楼层，立即启动直接分镜后台任务</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-run-cooldown" type="checkbox" ${settings.interaction.runSubmitCooldown !== false ? 'checked' : ''}>启用制作按钮 5 秒防重复点击</label>
             <label class="co-check co-debug-toggle"><input id="co-insert-into-floor" type="checkbox" ${settings.insert.enabled !== false ? 'checked' : ''}>绘制完成后把漫画插入目标楼层正文（默认开启）</label>
@@ -3297,12 +3310,72 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         } catch (error) { notify(`缓存恢复失败：${error.message}`, 'error'); await writeLog('error', '从本地缓存恢复失败', { result: error.message, cacheId }); }
         finally { busy = false; button.disabled = false; button.textContent = '重新上传写回'; }
     }
+    function comicMediaFromContainer(container) {
+        const messageElement = container?.closest?.('#chat .mes[mesid], #chat [mesid]');
+        const rawFloor = messageElement?.getAttribute?.('mesid');
+        const rawIndex = container?.getAttribute?.('data-index');
+        if (!/^\d+$/.test(String(rawFloor || '')) || !/^\d+$/.test(String(rawIndex || ''))) return null;
+        const floor = Number(rawFloor); const mediaIndex = Number(rawIndex);
+        let msg;
+        try { msg = context().chat[floor]; } catch { return null; }
+        const attachment = Array.isArray(msg?.extra?.media) ? msg.extra.media[mediaIndex] : null;
+        const info = comicMediaInfo(attachment, msg);
+        return info ? { ...info, floor, mediaIndex, msg, attachment, container } : null;
+    }
     function cacheIdFromImage(image) {
+        const resolved = comicMediaFromContainer(image?.closest?.('.mes_media_container'));
+        if (resolved) return resolved.cacheId;
         const legacy = String(image?.getAttribute?.('title') || '').match(/^comic-orb:image;cache=([^;]+);page=(\d+)$/);
         if (legacy) return legacy[1];
         const tagged = String(image?.getAttribute?.('src') || '').match(/#comic-orb-cache=([^&]+)&page=\d+$/);
         if (!tagged) return '';
         try { return decodeURIComponent(tagged[1]); } catch { return tagged[1]; }
+    }
+    function decorateComicMediaActions(scope = document) {
+        const candidates = [];
+        if (scope instanceof Element && scope.matches('.mes_media_container')) candidates.push(scope);
+        scope.querySelectorAll?.('#chat .mes_media_container, .mes_media_container')?.forEach(container => candidates.push(container));
+        for (const container of new Set(candidates)) {
+            const resolved = comicMediaFromContainer(container);
+            const existing = container.querySelector(':scope > .co-comic-media-action');
+            if (!resolved || settings.interaction.doubleClickRedraw === false) {
+                existing?.remove();
+                container.classList.remove('co-comic-media');
+                continue;
+            }
+            container.classList.add('co-comic-media');
+            if (existing) {
+                existing.setAttribute('aria-label', `漫画第 ${resolved.page} 页操作`);
+                existing.title = `漫画第 ${resolved.page} 页：重绘或查看实际提示词`;
+                continue;
+            }
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'co-comic-media-action';
+            button.setAttribute('aria-label', `漫画第 ${resolved.page} 页操作`);
+            button.title = `漫画第 ${resolved.page} 页：重绘或查看实际提示词`;
+            button.innerHTML = '<span aria-hidden="true">✎</span><span>漫画操作</span>';
+            container.append(button);
+        }
+    }
+    function scheduleComicMediaDecoration() {
+        if (comicMediaDecorationQueued) return;
+        comicMediaDecorationQueued = true;
+        queueMicrotask(() => {
+            comicMediaDecorationQueued = false;
+            decorateComicMediaActions(document);
+        });
+    }
+    function initializeComicMediaActions() {
+        const chat = document.querySelector('#chat');
+        if (!chat) {
+            setTimeout(initializeComicMediaActions, 500);
+            return;
+        }
+        comicMediaObserver?.disconnect();
+        comicMediaObserver = new MutationObserver(scheduleComicMediaDecoration);
+        comicMediaObserver.observe(chat, { childList: true, subtree: true });
+        scheduleComicMediaDecoration();
     }
     async function showCachedPrompt(cacheId) {
         return openRedrawDialog(cacheId, 'prompt');
@@ -3571,11 +3644,25 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-copy-prompt').addEventListener('click', async () => { try { await navigator.clipboard.writeText(val('co-actual-prompt')); notify('提示词已复制', 'success'); } catch (error) { notify(`复制失败：${error.message}`, 'error'); } });
     root.querySelector('#co-debug-enabled').addEventListener('change', async () => { const enabled = checked('co-debug-enabled'); settings.debug.enabled = enabled; save(); await writeLog('operation', `DEBUG 模式已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续记录完整文本与结构化参数；图片二进制仍排除' : '后续只记录操作与结果简写' }); });
     root.querySelector('#co-capture-model-io').addEventListener('change', async () => { const enabled = checked('co-capture-model-io'); settings.debug.captureModelIo = enabled; save(); await writeLog('operation', `大模型完整输入输出记录已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续成功与失败的演绎、分镜和绘画调用均保存完整文本；图片二进制与密钥排除' : '后续成功调用恢复简写；语义失败仍保留强制诊断' }); });
+    root.querySelector('#co-enable-redraw').addEventListener('change', () => { syncSettingsFromUi(); scheduleComicMediaDecoration(); });
     root.querySelector('#co-enable-run-cooldown').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
     root.querySelector('#co-insert-into-floor').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
     root.querySelectorAll('.co-tab').forEach(tab => tab.addEventListener('click', () => { root.querySelectorAll('.co-tab,.co-page').forEach(x => x.classList.remove('active')); tab.classList.add('active'); root.querySelector(`.co-page[data-page="${tab.dataset.page}"]`).classList.add('active'); if (tab.dataset.page === 'cache') renderImageCache(); if (tab.dataset.page === 'processes') renderProcessCenter(); if (tab.dataset.page === 'debug') refreshLogs().catch(error => notify(error.message, 'error')); }));
     root.querySelectorAll('input,textarea,select').forEach(el => { if (!el.classList.contains('co-ref-hint') && !el.classList.contains('co-ref-file')) el.addEventListener('change', () => { try { syncSettingsFromUi(); } catch {} }); });
     document.addEventListener('pointerdown', event => { if (!event.target.closest(`#${ROOT_ID} .co-model-row`)) closeModelOptions(); });
+    document.addEventListener('click', event => {
+        const button = event.target.closest?.('.co-comic-media-action');
+        if (!button) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (settings.interaction.doubleClickRedraw === false) return;
+        const resolved = comicMediaFromContainer(button.closest('.mes_media_container'));
+        if (!resolved) {
+            notify('无法从当前楼层定位这张漫画，请刷新聊天后重试', 'error');
+            return;
+        }
+        openRedrawDialog(resolved.cacheId).catch(error => notify(error.message, 'error'));
+    }, true);
     document.addEventListener('dblclick', event => {
         const image = event.target.closest?.('img'); const cacheId = cacheIdFromImage(image);
         if (cacheId) {
@@ -3612,6 +3699,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     makeDraggable(root.querySelector('#co-head'), root.querySelector('#co-panel'), 'panel');
     for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) { const pos = settings[key]; if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) { const el = root.querySelector(selector); el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`; } }
     renderRegexList(); renderRunCooldown(); refreshLogs().catch(() => {});
+    initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
     migrateLegacyTaggedMarkdown().catch(error => console.warn('[漫画工房] 旧版正文漫画标识迁移失败', error));
     void checkLocalProxyStatus();
