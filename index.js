@@ -376,6 +376,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         activePromptPreset: { adaptation: '', storyboard: '', drawing: '' },
         activeReferencePreset: '',
         insert: { enabled: true, alt: 'AI 漫画', marker: '<!-- comic-orb -->' }, debug: { enabled: false, captureModelIo: true },
+        autoRetry: { enabled: false, mode: 'limited', maxRetries: 3, intervalMs: 1000 },
         interaction: { doubleClickRedraw: true, doubleClickImmediate: true, runSubmitCooldown: true },
         storage: { localImageRoot: 'C:\\SillyTavern\\SillyTavern\\data\\default-user', cachePreviewLimit: 5, maxCacheMb: 512, autoCleanup: true },
         fab: { x: null, y: null }, panel: { x: null, y: null }
@@ -393,6 +394,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         ? (storedSettings.backendMode === 'full' ? 'full' : 'basic')
         : (Object.keys(storedSettings).length ? 'full' : 'basic');
     settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
+    settings.autoRetry = normalizeAutoRetry(settings.autoRetry);
     settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(settings.storage.cachePreviewLimit);
     settings.storage.maxCacheMb = normalizeMaxCacheMb(settings.storage.maxCacheMb);
     if (settings.storyboard.systemPrompt === LEGACY_STORYBOARD_SYSTEM_PROMPT) settings.storyboard.systemPrompt = DEFAULT_STORYBOARD_SYSTEM_PROMPT;
@@ -854,6 +856,42 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const parsed = Number(value);
         return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 5000;
     }
+    function normalizeAutoRetry(value = {}) {
+        const retries = Math.round(Number(value?.maxRetries));
+        const interval = Math.round(Number(value?.intervalMs));
+        return {
+            enabled: value?.enabled === true,
+            mode: value?.mode === 'full' ? 'full' : 'limited',
+            maxRetries: Number.isFinite(retries) ? Math.max(1, Math.min(100, retries)) : 3,
+            intervalMs: Number.isFinite(interval) ? Math.max(0, Math.min(2147483647, interval)) : 1000,
+        };
+    }
+    function autoRetryPolicy(value = settings.autoRetry) {
+        return normalizeAutoRetry(value);
+    }
+    function isAutoRetryableError(error, policy = settings.autoRetry) {
+        if (isCanceledError(error)) return false;
+        if (autoRetryPolicy(policy).mode === 'full') return true;
+        const category = String(error?.category || '');
+        const code = String(error?.code || '');
+        const status = Number(error?.httpStatus || error?.status || 0);
+        if (['authentication', 'content_filter', 'provider_refusal', 'quota', 'access', 'session_or_access', 'invalid_response'].includes(category)) return false;
+        if (['TEXT_RESPONSE_EMPTY', 'DRAWING_RESPONSE_NO_IMAGE', 'IMAGE_POLICY_REJECTED', 'IMAGE_QUOTA_EXHAUSTED', 'GEMINI_COOKIE_EXPIRED', 'GEMINI_SESSION_INVALID', 'IMAGE_ACCESS_UNAVAILABLE'].includes(code)) return false;
+        if (category === 'rate_limit' || status === 429) return true;
+        if ([408, 425, 500, 502, 503, 504].includes(status)) return true;
+        if (code === 'API_HTTP_ERROR') return false;
+        return /failed to fetch|fetch failed|network|networkerror|timeout|timed out|econn(?:reset|refused|aborted)|enotfound|eai_again|socket hang up|API 返回的不是 JSON/i.test(String(error?.message || error));
+    }
+    function waitForRetry(ms, signal) {
+        ensureNotCanceled(signal);
+        if (!ms) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+            const onAbort = () => { cleanup(); reject(signal.reason instanceof Error ? signal.reason : new DOMException('用户已取消任务', 'AbortError')); };
+            const cleanup = () => signal?.removeEventListener('abort', onAbort);
+            signal?.addEventListener('abort', onAbort, { once: true });
+        });
+    }
     function logApiTiming(operation, url, elapsedMs, success, status = 0) {
         lastApiTiming = { operation, url, elapsedMs, elapsedText: formatDuration(elapsedMs), success, status };
         queueLog('timing', 'API 调用耗时', settings.debug.enabled
@@ -864,13 +902,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function isModelApiOperation(operation) {
         return /^(?:分镜生成|分镜 API 测试|剧情演绎|演绎 API 测试|绘画生成|绘画 API 测试)/.test(String(operation || ''));
     }
-    async function apiFetch(url, options, operation = 'API 请求', validateResponse = null) {
-        let timingLogged = false;
-        let processFinished = false;
+    async function apiFetch(url, options, operation = 'API 请求', validateResponse = null, retryOptions = settings.autoRetry) {
         const captureModelIo = settings.debug.captureModelIo !== false && isModelApiOperation(operation);
         const detailedIo = settings.debug.enabled || captureModelIo;
         const request = await requestSnapshot(url, options, detailedIo);
         const processId = startRemoteProcess(operation, { url, method: options?.method || 'GET' }, { parentSignal: options?.signal });
+        const originalOperation = operation;
+        const retryPolicy = autoRetryPolicy(retryOptions);
         let cancelEndpoint = '';
         try {
             const parsed = new URL(url, location.href);
@@ -880,8 +918,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const fetchOptions = { ...options, headers: fetchHeaders, signal: remoteProcessSignal(processId) };
         if (cancelEndpoint) fetchOptions.signal.addEventListener('abort', () => { void fetch(cancelEndpoint, { method: 'POST', keepalive: true }).catch(() => {}); }, { once: true });
         queueLog('request', operation, detailedIo ? { ...request, ...(captureModelIo ? { modelIoCapture: true } : {}) } : { method: request.method, url: request.url });
-        const started = performance.now();
-        try {
+        let attempt = 0;
+        while (true) {
+            attempt++;
+            let timingLogged = false;
+            const started = performance.now();
+            try {
             const response = await fetch(url, fetchOptions);
             const text = await response.text();
             const data = safeJson(text, null);
@@ -892,6 +934,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const error = validateResponse === validateDrawingPayload
                     ? classifyDrawingApiError(providerMessage || `HTTP ${response.status}`, response.status)
                     : Object.assign(new Error(providerMessage || `HTTP ${response.status}`), { code: 'API_HTTP_ERROR', category: 'api_error', providerMessage });
+                error.httpStatus = response.status;
                 logApiTiming(operation, url, elapsedMs, false, response.status); timingLogged = true;
                 queueLog('error', operation, detailedIo
                     ? { status: response.status, elapsedMs, elapsedText: formatDuration(elapsedMs), headers: Object.fromEntries(response.headers.entries()), category: error.category, code: error.code, request, body: data ?? text, ...(captureModelIo ? { modelIoCapture: true } : {}) }
@@ -926,15 +969,43 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 ? { status: response.status, elapsedMs, elapsedText: formatDuration(elapsedMs), headers: Object.fromEntries(response.headers.entries()), body: data, ...(captureModelIo ? { modelIoCapture: true } : {}) }
                 : { status: response.status, elapsedMs, elapsedText: formatDuration(elapsedMs), result: '成功' });
             if ((typeof data === 'object' || typeof data === 'function') && data !== null) Object.defineProperty(data, '__comicOrbTiming', { value: { ...timing }, enumerable: false });
-            finishRemoteProcess(processId, 'success', `HTTP ${response.status} · ${formatDuration(elapsedMs)}`); processFinished = true;
+            finishRemoteProcess(processId, 'success', `HTTP ${response.status} · ${formatDuration(elapsedMs)}${attempt > 1 ? ` · 第 ${attempt} 次尝试成功` : ''}`);
             return data;
-        } catch (error) {
-            if (!timingLogged) logApiTiming(operation, url, Math.round(performance.now() - started), false, 0);
-            if (!error?.apiLogged) {
-                queueLog(isCanceledError(error) ? 'operation' : 'error', operation, detailedIo ? { request, error: error?.stack || String(error), canceled: isCanceledError(error), ...(captureModelIo ? { modelIoCapture: true } : {}) } : { result: isCanceledError(error) ? '用户取消' : String(error?.message || error).slice(0, 160) });
+            } catch (error) {
+                if (!timingLogged) logApiTiming(operation, url, Math.round(performance.now() - started), false, 0);
+                if (!error?.apiLogged) {
+                    queueLog(isCanceledError(error) ? 'operation' : 'error', operation, detailedIo ? { request, error: error?.stack || String(error), canceled: isCanceledError(error), attempt, ...(captureModelIo ? { modelIoCapture: true } : {}) } : { attempt, result: isCanceledError(error) ? '用户取消' : String(error?.message || error).slice(0, 160) });
+                }
+                const retryable = retryPolicy.enabled && isAutoRetryableError(error, retryPolicy);
+                if (retryable && attempt <= retryPolicy.maxRetries) {
+                    const result = `第 ${attempt} 次请求失败：${String(error?.message || error).slice(0, 160)}；${formatDuration(retryPolicy.intervalMs)} 后进行第 ${attempt + 1} 次尝试`;
+                    updateRemoteProcess(processId, `${originalOperation} · 自动重试 ${attempt}/${retryPolicy.maxRetries}`, result);
+                    queueLog('operation', `${originalOperation} · 自动重试等待`, {
+                        attempt,
+                        maxRetries: retryPolicy.maxRetries,
+                        intervalMs: retryPolicy.intervalMs,
+                        category: error?.category,
+                        code: error?.code,
+                        status: Number(error?.httpStatus || error?.status || 0),
+                        result,
+                    });
+                    try {
+                        await waitForRetry(retryPolicy.intervalMs, fetchOptions.signal);
+                    } catch (waitError) {
+                        finishRemoteProcess(processId, isCanceledError(waitError) ? 'canceled' : 'error', isCanceledError(waitError) ? '用户取消' : waitError?.message || String(waitError));
+                        throw waitError;
+                    }
+                    operation = originalOperation;
+                    updateRemoteProcess(processId, originalOperation, `正在进行第 ${attempt + 1} 次请求`);
+                    continue;
+                }
+                if (retryable && attempt > retryPolicy.maxRetries) {
+                    error.message = `${error.message}（自动重试 ${retryPolicy.maxRetries} 次后仍失败）`;
+                    queueLog('error', `${originalOperation} · 自动重试已耗尽`, { attempts: attempt, maxRetries: retryPolicy.maxRetries, result: error.message });
+                }
+                finishRemoteProcess(processId, isCanceledError(error) ? 'canceled' : 'error', isCanceledError(error) ? '用户取消' : error?.message || String(error));
+                throw error;
             }
-            if (!processFinished) finishRemoteProcess(processId, isCanceledError(error) ? 'canceled' : 'error', isCanceledError(error) ? '用户取消' : error?.message || String(error));
-            throw error;
         }
     }
     function shouldRelayProviderRequest(url) {
@@ -947,7 +1018,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
     }
     async function providerApiFetch(conf, url, options, operation = 'API 请求', validateResponse = null) {
-        if (backendModeFor(conf) !== 'full' || !shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse);
+        const retryOptions = conf?.autoRetry || settings.autoRetry;
+        if (backendModeFor(conf) !== 'full' || !shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse, retryOptions);
         await requireServerPluginReady();
         const requestHeaders = Object.fromEntries(new Headers(options?.headers || {}).entries());
         delete requestHeaders.authorization;
@@ -976,7 +1048,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             headers: localHeaders,
             body: JSON.stringify(payload),
             signal: options?.signal,
-        }, `${operation} · 本地中继`, validateResponse);
+        }, `${operation} · 本地中继`, validateResponse, retryOptions);
     }
 
     function responseTextSummary(data) {
@@ -1572,7 +1644,17 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             syncSettingsFromUi(); status.textContent = '正在获取模型列表…';
             const conf = settings[kind];
             const endpoint = modelsEndpoint(conf);
-            const data = await providerApiFetch(conf, endpoint, { method: 'GET', headers: apiHeaders(conf) }, `${apiKindLabel(kind)} API 获取模型`);
+            const validateModelsResponse = value => {
+                const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+                if (!retryPolicy.enabled || retryPolicy.mode !== 'full') return;
+                const candidateList = Array.isArray(value?.data) ? value.data : Array.isArray(value?.models) ? value.models : Array.isArray(value) ? value : [];
+                if (!candidateList.length) {
+                    const error = new Error('模型列表响应为空');
+                    error.code = 'MODELS_RESPONSE_EMPTY'; error.category = 'invalid_response';
+                    throw error;
+                }
+            };
+            const data = await providerApiFetch(conf, endpoint, { method: 'GET', headers: apiHeaders(conf) }, `${apiKindLabel(kind)} API 获取模型`, validateModelsResponse);
             const raw = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : Array.isArray(data) ? data : [];
             const models = raw.map(item => typeof item === 'string' ? item : item?.id || item?.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
             if (!models.length && isLocalGeminiWebConfig(conf)) {
@@ -1655,7 +1737,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             ...extras,
         };
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
-        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '分镜 API 测试' : '分镜生成', value => validateTextApiPayload(value, '分镜 API ', body));
+        const validateStoryboardResponse = value => {
+            validateTextApiPayload(value, '分镜 API ', body);
+            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseStoryboardPlan(extractApiResponseText(value), conf, outputLanguage, limits);
+        };
+        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '分镜 API 测试' : '分镜生成', validateStoryboardResponse);
         const text = extractApiResponseText(data);
         return options.withTiming ? { text, timing: data?.__comicOrbTiming ? { ...data.__comicOrbTiming } : null, ageMetadataConflict } : text;
     }
@@ -1676,7 +1763,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             ],
         };
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
-        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 正则助手 · 分镜 API', value => validateTextApiPayload(value, 'AI 正则助手 ', body));
+        const validateRegexResponse = value => {
+            validateTextApiPayload(value, 'AI 正则助手 ', body);
+            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') validateRegexList(parseModelJson(extractApiResponseText(value), 'AI 正则助手'));
+        };
+        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 正则助手 · 分镜 API', validateRegexResponse);
         return extractApiResponseText(data);
     }
     async function callAdaptation(plot, options = {}) {
@@ -1718,7 +1810,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             ...extras,
         };
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
-        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '演绎 API 测试' : '剧情演绎', value => validateTextApiPayload(value, '演绎 API ', body));
+        const validateAdaptationResponse = value => {
+            validateTextApiPayload(value, '演绎 API ', body);
+            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseAdaptationPlan(extractApiResponseText(value), outputLanguage, totalPageRange, workerPageRange);
+        };
+        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '演绎 API 测试' : '剧情演绎', validateAdaptationResponse);
         const text = extractApiResponseText(data);
         return options.withTiming ? { text, timing: data?.__comicOrbTiming ? { ...data.__comicOrbTiming } : null } : text;
     }
@@ -2143,7 +2240,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         else activeRefs.forEach((ref, i) => form.append('image[]', dataUrlToBlob(ref.dataUrl), ref.name || `reference-${i + 1}.png`));
         const optional = { ...imageApiOptions(conf, true), ...extras };
         for (const [key, value] of Object.entries(optional)) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
-        const data = await apiFetch(drawingEndpoint(conf, 'edits'), { method: 'POST', headers: apiHeaders(conf, true), body: form, signal: options.signal }, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits，${activeRefs.length} 张参考图）`, validateDrawingPayload);
+        const data = await apiFetch(drawingEndpoint(conf, 'edits'), { method: 'POST', headers: apiHeaders(conf, true), body: form, signal: options.signal }, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits，${activeRefs.length} 张参考图）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
     }
     async function callDrawingThroughLocalProxy(conf, protocol, fields, referenceList, options = {}) {
@@ -2158,7 +2255,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             references: referenceList.map((reference, index) => ({ dataUrl: reference.dataUrl, name: reference.name || `reference-${index + 1}.png` })),
         };
         const localHeaders = { ...context().getRequestHeaders(), ...(conf.apiKey ? { 'X-Comic-Orb-Api-Key': conf.apiKey } : {}) };
-        const data = await apiFetch(`${SERVER_PLUGIN_API}/image`, { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload);
+        const data = await apiFetch(`${SERVER_PLUGIN_API}/image`, { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
         return drawingResult(data, conf, fields.prompt, options);
     }
     async function callDrawing(prompt, options = {}) {
@@ -2200,7 +2297,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (activeRefs.length) return callDrawingEdits(conf, finalPrompt, activeRefs, options);
         const body = { model: conf.model, prompt: finalPrompt, n: 1, ...(String(conf.size || '').trim() ? { size: conf.size } : {}), ...imageApiOptions(conf), ...apiExtras(conf) };
         if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'generations', body, [], options);
-        const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload);
+        const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
     }
     function abortableDelay(ms, signal) {
@@ -2520,7 +2617,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
+            autoRetry: clone(settings.autoRetry),
+            adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
@@ -2749,6 +2847,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           </div></div>
           <div class="co-page" data-page="settings">
             <div class="co-callout"><strong>基础模式与完整模式</strong><br>基础模式安装扩展后立即可用，API 请求由当前浏览器直接发送；约 300 秒以上的请求可能被浏览器、酒馆入口或中间代理断开，并取决于 API 是否允许浏览器跨域。完整模式通过酒馆主机上的服务端组件中继，支持最长 1800 秒、参考图 Multipart 和取消上游请求。模式会随每个后台任务冻结，运行中切换不会改变已经提交的任务。</div>
+            <div class="co-profile-manager co-retry-panel ${settings.autoRetry.enabled ? 'enabled' : 'disabled'}" id="co-auto-retry-panel">
+              <label class="co-check co-debug-toggle" title="默认关闭。启用后，当前重试档位、次数和间隔会随每个新任务冻结；不会改变已经运行的任务。"><input id="co-auto-retry-enabled" type="checkbox" ${settings.autoRetry.enabled ? 'checked' : ''}>启用自动重试模式（默认关闭）</label>
+              <div class="co-grid">
+                <label class="co-field" title="有限重试只处理网络、超时、429和可恢复5xx；全自动除用户Cancel外，任何API或响应校验错误都会重试。"><span>工作档位</span><select id="co-auto-retry-mode" ${settings.autoRetry.enabled ? '' : 'disabled'}><option value="limited" ${settings.autoRetry.mode !== 'full' ? 'selected' : ''}>有限重试</option><option value="full" ${settings.autoRetry.mode === 'full' ? 'selected' : ''}>全自动重试</option></select></label>
+                <label class="co-field" title="首次请求失败后最多再次调用多少次；允许1到100次。"><span>重试次数（1–100）</span><input id="co-auto-retry-count" type="number" min="1" max="100" step="1" value="${esc(settings.autoRetry.maxRetries)}" ${settings.autoRetry.enabled ? '' : 'disabled'}></label>
+                <label class="co-field co-full" title="每次失败后等待多久再发送下一次请求，单位为毫秒；0表示立即重试。"><span>重试间隔（ms）</span><input id="co-auto-retry-interval" type="number" min="0" max="2147483647" step="100" value="${esc(settings.autoRetry.intervalMs)}" ${settings.autoRetry.enabled ? '' : 'disabled'}></label>
+              </div>
+              <div class="co-callout" id="co-auto-retry-help">${settings.autoRetry.mode === 'full' ? '全自动：除用户主动 Cancel 外，无论错误类型都会重试，包括拒绝、无图、空文本以及演绎/分镜 JSON 校验失败。' : '有限：只重试较可能自行恢复的网络、超时、限流与服务端错误；鉴权、额度、内容拒绝和格式校验错误会立即停止。'}</div>
+            </div>
             <label class="co-check co-debug-toggle"><input id="co-enable-redraw" type="checkbox" ${settings.interaction.doubleClickRedraw ? 'checked' : ''}>显示正文漫画的“漫画操作”按钮（手机与桌面单击可用）</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-immediate-work" type="checkbox" ${settings.interaction.doubleClickImmediate !== false ? 'checked' : ''}>双击无图片的非User对话楼层，立即启动直接分镜后台任务</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-run-cooldown" type="checkbox" ${settings.interaction.runSubmitCooldown !== false ? 'checked' : ''}>启用制作按钮 5 秒防重复点击</label>
@@ -3084,6 +3191,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function syncSettingsFromUi() {
         syncRegexFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        settings.autoRetry = normalizeAutoRetry({ enabled: checked('co-auto-retry-enabled'), mode: val('co-auto-retry-mode'), maxRetries: val('co-auto-retry-count'), intervalMs: val('co-auto-retry-interval') });
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
         settings.interaction.runSubmitCooldown = checked('co-enable-run-cooldown');
@@ -3099,6 +3207,17 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function val(id) { return root.querySelector(`#${id}`)?.value ?? ''; }
     function checked(id) { return Boolean(root.querySelector(`#${id}`)?.checked); }
     function setStatus(text, type = '') { const el = root.querySelector('#co-status'); el.textContent = text; el.className = `co-status ${type}`; }
+    function renderAutoRetrySettings() {
+        const enabled = checked('co-auto-retry-enabled');
+        const mode = val('co-auto-retry-mode') === 'full' ? 'full' : 'limited';
+        const panel = root.querySelector('#co-auto-retry-panel');
+        panel?.classList.toggle('enabled', enabled); panel?.classList.toggle('disabled', !enabled);
+        ['co-auto-retry-mode', 'co-auto-retry-count', 'co-auto-retry-interval'].forEach(id => { const input = root.querySelector(`#${id}`); if (input) input.disabled = !enabled; });
+        const help = root.querySelector('#co-auto-retry-help');
+        if (help) help.textContent = mode === 'full'
+            ? '全自动：除用户主动 Cancel 外，无论错误类型都会重试，包括拒绝、无图、空文本以及演绎/分镜 JSON 校验失败。'
+            : '有限：只重试较可能自行恢复的网络、超时、限流与服务端错误；鉴权、额度、内容拒绝和格式校验错误会立即停止。';
+    }
     function runButtonIdleLabel() { return settings.insert.enabled === false ? '生成并发分页漫画（仅保存缓存）' : '生成并发分页漫画并插入末层'; }
     function renderRunCooldown() {
         const button = root.querySelector('#co-run'); if (!button) return;
@@ -3423,7 +3542,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
+            autoRetry: clone(settings.autoRetry),
+            adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
@@ -3644,6 +3764,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-copy-prompt').addEventListener('click', async () => { try { await navigator.clipboard.writeText(val('co-actual-prompt')); notify('提示词已复制', 'success'); } catch (error) { notify(`复制失败：${error.message}`, 'error'); } });
     root.querySelector('#co-debug-enabled').addEventListener('change', async () => { const enabled = checked('co-debug-enabled'); settings.debug.enabled = enabled; save(); await writeLog('operation', `DEBUG 模式已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续记录完整文本与结构化参数；图片二进制仍排除' : '后续只记录操作与结果简写' }); });
     root.querySelector('#co-capture-model-io').addEventListener('change', async () => { const enabled = checked('co-capture-model-io'); settings.debug.captureModelIo = enabled; save(); await writeLog('operation', `大模型完整输入输出记录已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续成功与失败的演绎、分镜和绘画调用均保存完整文本；图片二进制与密钥排除' : '后续成功调用恢复简写；语义失败仍保留强制诊断' }); });
+    root.querySelector('#co-auto-retry-enabled').addEventListener('change', () => { renderAutoRetrySettings(); syncSettingsFromUi(); });
+    root.querySelector('#co-auto-retry-mode').addEventListener('change', () => { renderAutoRetrySettings(); syncSettingsFromUi(); });
     root.querySelector('#co-enable-redraw').addEventListener('change', () => { syncSettingsFromUi(); scheduleComicMediaDecoration(); });
     root.querySelector('#co-enable-run-cooldown').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
     root.querySelector('#co-insert-into-floor').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
@@ -3698,7 +3820,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     makeDraggable(root.querySelector('#co-fab'), root.querySelector('#co-fab'), 'fab', true);
     makeDraggable(root.querySelector('#co-head'), root.querySelector('#co-panel'), 'panel');
     for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) { const pos = settings[key]; if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) { const el = root.querySelector(selector); el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`; } }
-    renderRegexList(); renderRunCooldown(); refreshLogs().catch(() => {});
+    renderRegexList(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
     initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
     migrateLegacyTaggedMarkdown().catch(error => console.warn('[漫画工房] 旧版正文漫画标识迁移失败', error));

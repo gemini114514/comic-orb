@@ -41,6 +41,7 @@
 .co-model-option { width:100%; border:0; border-radius:6px; padding:7px 8px; color:var(--co-text); background:transparent; text-align:left; cursor:pointer; overflow-wrap:anywhere }.co-model-option:hover,.co-model-option:focus { outline:none; background:rgba(255,122,157,.2) }.co-model-empty { padding:9px; color:var(--co-muted); font-size:11px; line-height:1.45 }
 .co-collection-actions { display:flex; justify-content:flex-end; gap:7px; margin:10px 0; flex-wrap:wrap }
 .co-profile-manager { padding:10px; margin-bottom:12px; border:1px solid rgba(255,122,157,.28); border-radius:11px; background:rgba(255,122,157,.07) }.co-profile-top { display:grid; grid-template-columns:1fr 1fr; gap:9px }.co-profile-actions { display:flex; gap:7px; flex-wrap:wrap; margin-top:9px }
+.co-retry-panel.disabled .co-grid,.co-retry-panel.disabled #co-auto-retry-help { opacity:.48 }.co-retry-panel.enabled { border-color:rgba(121,201,149,.55); background:rgba(121,201,149,.07) }.co-retry-panel .co-debug-toggle { margin-bottom:9px }
 .co-ref-preset-state { margin-top:8px; color:var(--co-muted); font-size:11px }.co-ref-preset-state.dirty { color:#ffd28c }
 .co-prompt-manager { padding:9px; margin:2px 0 8px; border:1px solid var(--co-border); border-radius:10px; background:var(--co-card) }.co-prompt-top { display:grid; grid-template-columns:1fr 1fr; gap:8px }.co-prompt-actions { display:flex; gap:7px; flex-wrap:wrap; margin-top:8px }
 .co-test { border-color:rgba(157,228,181,.45); color:#b7f4ca }.co-danger { border-color:rgba(255,110,130,.35); color:#ffadb8 }
