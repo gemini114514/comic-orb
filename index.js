@@ -308,13 +308,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const style = document.createElement('link');
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
-        style.href = new URL('./style.css?v=20260725-chat-reader-cache-pages-1', import.meta.url).href;
+        style.href = new URL('./style.css?v=20260725-reader-versions-insert-toggle-1', import.meta.url).href;
         document.head.appendChild(style);
     }
 
     const defaults = {
         range: '',
-        outputLanguage: 'auto',
+        outputLanguage: 'zh-CN',
         workflowMode: 'direct',
         batchDrawingIntervalMs: 5000,
         interpretivePageRange: { min: 2, max: 8 },
@@ -354,7 +354,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         promptPresets: { adaptation: [], storyboard: [], drawing: [] },
         activePromptPreset: { adaptation: '', storyboard: '', drawing: '' },
         activeReferencePreset: '',
-        insert: { alt: 'AI 漫画', marker: '<!-- comic-orb -->' }, debug: { enabled: false, captureModelIo: true },
+        insert: { enabled: true, alt: 'AI 漫画', marker: '<!-- comic-orb -->' }, debug: { enabled: false, captureModelIo: true },
         interaction: { doubleClickRedraw: true, doubleClickImmediate: true, runSubmitCooldown: true },
         storage: { localImageRoot: 'C:\\SillyTavern\\SillyTavern\\data\\default-user', cachePreviewLimit: 5, maxCacheMb: 512, autoCleanup: true },
         fab: { x: null, y: null }, panel: { x: null, y: null }
@@ -417,6 +417,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         settings.migrations.neutralPublicTestPromptsV1 = true;
     }
+    if (!settings.migrations.defaultOutputLanguageZhCnV1) {
+        if (!String(settings.outputLanguage || '').trim() || String(settings.outputLanguage).trim().toLocaleLowerCase() === 'auto') settings.outputLanguage = 'zh-CN';
+        settings.migrations.defaultOutputLanguageZhCnV1 = true;
+    }
     if (Array.isArray(settings.promptPresets?.storyboard)) settings.promptPresets.storyboard.forEach(preset => { if (!preset) return; if (preset.content === LEGACY_STORYBOARD_SYSTEM_PROMPT) preset.content = DEFAULT_STORYBOARD_SYSTEM_PROMPT; preset.content = upgradeStoryboardClosedWorld(preset.content); });
     if (!settings.regexList.length && String(settings.regexRules || '').trim()) settings.regexList = migrateRegexRules(settings.regexRules);
     settings.regexList = settings.regexList.map(rule => (rule.pattern.startsWith('<thinking\\b[^>]*>') || rule.pattern.includes('\\[metacognition\\]')) ? { ...rule, pattern: THINKING_CLEANUP_PATTERN, flags: 'gim' } : rule);
@@ -449,6 +453,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     const redrawLocks = new Map();
     let cacheReaderRecords = [];
     let cacheReaderIndex = 0;
+    let cacheReaderVersionIndex = 0;
     let cacheReaderTouchStart = null;
     let cacheListPage = 1;
     let cacheReaderAllRecords = [];
@@ -2393,7 +2398,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             ensureNotCanceled(signal);
             lastImage = drawingBatch.results.map(result => result.image); updateDebug();
             const drawingTiming = { wallMs: drawingBatch.wallMs, wallTime: drawingBatch.wallTime, pages: drawingBatch.results.map(result => ({ page: result.page, elapsedMs: result.timing?.elapsedMs, elapsedText: result.timing?.elapsedText })) };
-            updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 保存并写回正文`, `绘画墙钟 ${drawingBatch.wallTime}，正在保存 ${lastImage.length} 页`);
+            const insertEnabled = execution.insert?.enabled !== false;
+            updateRemoteProcess(processId, `漫画任务 #${job.shortId} · ${insertEnabled ? '保存并写回正文' : '保存图片缓存'}`, `绘画墙钟 ${drawingBatch.wallTime}，正在保存 ${lastImage.length} 页`);
             let ctx = requireProductionContext(job);
             const saveController = new AbortController();
             if (signal.aborted) saveController.abort(signal.reason); else signal.addEventListener('abort', () => saveController.abort(signal.reason), { once: true });
@@ -2407,11 +2413,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             }));
             ensureNotCanceled(signal); ctx = requireProductionContext(job);
             const imageItems = drawingBatch.results.map((result, index) => ({ url: saved[index], cacheId: result.cacheId, page: result.page }));
-            await insertPagesIntoFloor(ctx, job.targetFloor, imageItems, execution.insert);
-            await writeLog('result', '漫画生成完成', execution.debugEnabled ? { taskId: job.id, targetFloor: job.targetFloor, storyboard: plan, saved, cacheIds: drawingBatch.results.map(result => result.cacheId), timing: { storyboard: storyboardTiming, drawing: drawingTiming } } : { taskId: job.id, result: `已插入第 ${job.targetFloor} 层，共 ${saved.length} 页`, storyboardTime: storyboardTiming?.elapsedText, drawingWallTime: drawingBatch.wallTime, pageTimes: drawingTiming.pages });
-            finishRemoteProcess(processId, 'success', `已插入第 ${job.targetFloor} 层 · ${saved.length} 页 · 绘画墙钟 ${drawingBatch.wallTime}`);
+            if (insertEnabled) await insertPagesIntoFloor(ctx, job.targetFloor, imageItems, execution.insert);
+            const completionText = insertEnabled ? `已插入第 ${job.targetFloor} 层，共 ${saved.length} 页` : `已保存 ${saved.length} 页，按设置未写回正文`;
+            await writeLog('result', '漫画生成完成', execution.debugEnabled ? { taskId: job.id, targetFloor: job.targetFloor, insertedIntoFloor: insertEnabled, storyboard: plan, saved, cacheIds: drawingBatch.results.map(result => result.cacheId), timing: { storyboard: storyboardTiming, drawing: drawingTiming } } : { taskId: job.id, result: completionText, storyboardTime: storyboardTiming?.elapsedText, drawingWallTime: drawingBatch.wallTime, pageTimes: drawingTiming.pages });
+            finishRemoteProcess(processId, 'success', `${completionText} · 绘画墙钟 ${drawingBatch.wallTime}`);
             workflowCheckpoints.delete(job.id);
-            setStatus(`任务 #${job.shortId} 完成：已向第 ${job.targetFloor} 层插入 ${saved.length} 页。`, 'ok'); notify(`任务 #${job.shortId}：漫画 ${saved.length} 页已插入第 ${job.targetFloor} 层`, 'success');
+            setStatus(`任务 #${job.shortId} 完成：${completionText}。`, 'ok'); notify(`任务 #${job.shortId}：${completionText}`, 'success');
         } catch (error) {
             const canceled = isCanceledError(error) || signal.aborted;
             if (canceled) {
@@ -2504,7 +2511,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>演绎模式总页数最少</span><input id="co-interpretive-min-pages" type="number" min="1" max="20" value="${esc(settings.interpretivePageRange?.min ?? 2)}"></label>
             <label class="co-field"><span>演绎模式总页数最多</span><input id="co-interpretive-max-pages" type="number" min="1" max="20" value="${esc(settings.interpretivePageRange?.max ?? 8)}"></label>
             <label class="co-field"><span>单个分镜 AI 负责页数</span><input id="co-storyboard-worker-pages" value="${esc(settings.storyboardWorkerPages || '1-3')}" placeholder="固定值如 2，或范围如 1-3"></label>
-            <label class="co-field"><span>漫画对白与可见文字语言</span><input id="co-output-language" list="co-output-language-options" value="${esc(String(settings.outputLanguage || 'auto'))}" placeholder="例如 auto、zh-CN、ja-JP、en-US"><datalist id="co-output-language-options"><option value="auto">跟随浏览器语言</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="zh-HK">繁體中文（香港）</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">français</option><option value="de-DE">Deutsch</option><option value="es-ES">español</option></datalist></label>
+            <label class="co-field"><span>漫画对白与可见文字语言</span><input id="co-output-language" list="co-output-language-options" value="${esc(String(settings.outputLanguage || 'zh-CN'))}" placeholder="例如 zh-CN、auto、ja-JP、en-US"><datalist id="co-output-language-options"><option value="zh-CN">简体中文（默认）</option><option value="auto">跟随浏览器语言</option><option value="zh-TW">繁體中文</option><option value="zh-HK">繁體中文（香港）</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">français</option><option value="de-DE">Deutsch</option><option value="es-ES">español</option></datalist></label>
             <label class="co-field"><span>图片替代文字</span><input id="co-alt" value="${esc(settings.insert.alt)}"></label>
             <label class="co-check co-full"><input id="co-names" type="checkbox" ${settings.includeNames ? 'checked' : ''}>发送剧情时保留角色名和楼层号</label>
             <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
@@ -2568,6 +2575,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-check co-debug-toggle"><input id="co-enable-redraw" type="checkbox" ${settings.interaction.doubleClickRedraw ? 'checked' : ''}>正文漫画图双击打开“重绘 / 实际提示词”详情弹窗</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-immediate-work" type="checkbox" ${settings.interaction.doubleClickImmediate !== false ? 'checked' : ''}>双击无图片的非User对话楼层，立即启动直接分镜后台任务</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-run-cooldown" type="checkbox" ${settings.interaction.runSubmitCooldown !== false ? 'checked' : ''}>启用制作按钮 5 秒防重复点击</label>
+            <label class="co-check co-debug-toggle"><input id="co-insert-into-floor" type="checkbox" ${settings.insert.enabled !== false ? 'checked' : ''}>绘制完成后把漫画插入目标楼层正文（默认开启）</label>
             <label class="co-check co-debug-toggle"><input id="co-include-mvu" type="checkbox" ${settings.includeMvuData ? 'checked' : ''}>发送剧情时携带 MVU 数据</label>
             <label class="co-check co-debug-toggle"><input id="co-preflight-neutralize" type="checkbox" ${settings.preflightNeutralize ? 'checked' : ''}>启用 API 发送前中性措辞清洗（默认关闭，仅用于输入外审过严的平台）</label>
             <div class="co-callout">关闭时，演绎与直接分镜 API 会收到剧情正则及 MVU 处理后的原文；开启时，只对本次 API 请求副本中的少量直白评价和写实组织措辞做等义替换，不修改酒馆正文、缓存或检查点。该开关会随后台任务快照冻结。</div>
@@ -2586,7 +2594,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         </main>
       </section>
       <dialog class="co-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画页详情</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><nav class="co-dialog-tabs"><button class="active" data-dialog-page="redraw" type="button">重绘</button><button data-dialog-page="prompt" type="button">实际提示词</button></nav><section class="co-dialog-page active" data-dialog-page="redraw"><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><div class="co-callout">确认时会冻结当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></section><section class="co-dialog-page" data-dialog-page="prompt"><textarea id="co-actual-prompt" readonly></textarea><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button><button class="co-mini" id="co-copy-prompt" type="button">复制文本</button></div></section></form></dialog>
-      <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions"><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
+      <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
     document.body.appendChild(root);
     const reasoningField = document.createElement('label');
     reasoningField.className = 'co-field';
@@ -2805,7 +2813,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'auto'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
         settings.interaction.runSubmitCooldown = checked('co-enable-run-cooldown');
@@ -2821,11 +2829,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function val(id) { return root.querySelector(`#${id}`)?.value ?? ''; }
     function checked(id) { return Boolean(root.querySelector(`#${id}`)?.checked); }
     function setStatus(text, type = '') { const el = root.querySelector('#co-status'); el.textContent = text; el.className = `co-status ${type}`; }
+    function runButtonIdleLabel() { return settings.insert.enabled === false ? '生成并发分页漫画（仅保存缓存）' : '生成并发分页漫画并插入末层'; }
     function renderRunCooldown() {
         const button = root.querySelector('#co-run'); if (!button) return;
         if (settings.interaction.runSubmitCooldown === false) {
             if (runCooldownTimer) clearInterval(runCooldownTimer); runCooldownTimer = null; runCooldownUntil = 0;
-            button.disabled = false; button.classList.remove('running'); button.textContent = '生成并发分页漫画并插入末层';
+            button.disabled = false; button.classList.remove('running'); button.textContent = runButtonIdleLabel();
             return;
         }
         const remaining = Math.max(0, runCooldownUntil - Date.now());
@@ -2834,7 +2843,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             return;
         }
         if (runCooldownTimer) clearInterval(runCooldownTimer); runCooldownTimer = null; runCooldownUntil = 0;
-        button.disabled = false; button.classList.remove('running'); button.textContent = '生成并发分页漫画并插入末层';
+        button.disabled = false; button.classList.remove('running'); button.textContent = runButtonIdleLabel();
     }
     function startRunCooldown() {
         if (settings.interaction.runSubmitCooldown === false) { renderRunCooldown(); return; }
@@ -2889,22 +2898,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return String(chatId || '').trim() || '旧缓存 / 未记录对话';
     }
     function readerPagesForChat(records, chatId) {
-        const byFloor = new Map();
+        const byPage = new Map();
         records.filter(record => !record.test && String(record.chatId || '') === String(chatId || '') && Number.isInteger(record.targetFloor)).forEach(record => {
-            if (!byFloor.has(record.targetFloor)) byFloor.set(record.targetFloor, []);
-            byFloor.get(record.targetFloor).push(record);
+            const pageNumber = Number(record.pageNumber || 1);
+            const key = `${Number(record.targetFloor)}|${pageNumber}`;
+            if (!byPage.has(key)) byPage.set(key, { targetFloor: Number(record.targetFloor), pageNumber, versions: [] });
+            byPage.get(key).versions.push(record);
         });
-        const pages = [];
-        [...byFloor.entries()].sort((a, b) => a[0] - b[0]).forEach(([floor, floorRecords]) => {
-            floorRecords.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-            const newest = floorRecords[0];
-            const expected = Math.max(1, Number(newest.storyboardPageCount || newest.storyboardPlan?.pages?.length || Math.max(...floorRecords.map(record => Number(record.pageNumber || 1)))));
-            for (let page = 1; page <= expected; page++) {
-                const record = floorRecords.find(item => Number(item.pageNumber || 1) === page);
-                if (record) pages.push(record);
-            }
-        });
-        return pages.sort((a, b) => Number(a.targetFloor) - Number(b.targetFloor) || Number(a.pageNumber || 1) - Number(b.pageNumber || 1));
+        return [...byPage.values()]
+            .map(group => ({ ...group, versions: group.versions.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))) }))
+            .sort((a, b) => a.targetFloor - b.targetFloor || a.pageNumber - b.pageNumber);
     }
     function renderReaderChatOptions() {
         const select = root.querySelector('#co-reader-chat-select');
@@ -2920,14 +2923,17 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         cacheReaderChatId = String(chatId || '');
         cacheReaderRecords = readerPagesForChat(cacheReaderAllRecords, cacheReaderChatId);
         if (!cacheReaderRecords.length) { notify('这条对话记录没有可阅读的生产漫画缓存', 'info'); return false; }
-        cacheReaderIndex = preferredRecord
-            ? Math.max(0, cacheReaderRecords.findIndex(record => record.id === preferredRecord.id
-                || (record.targetFloor === preferredRecord.targetFloor && Number(record.pageNumber || 1) === Number(preferredRecord.pageNumber || 1))))
-            : 0;
+        cacheReaderIndex = preferredRecord ? Math.max(0, cacheReaderRecords.findIndex(group => group.targetFloor === Number(preferredRecord.targetFloor) && group.pageNumber === Number(preferredRecord.pageNumber || 1))) : 0;
+        const preferredGroup = cacheReaderRecords[cacheReaderIndex];
+        const preferredVersionIndex = preferredRecord ? preferredGroup?.versions?.findIndex(record => record.id === preferredRecord.id) : 0;
+        cacheReaderVersionIndex = Number.isInteger(preferredVersionIndex) && preferredVersionIndex >= 0 ? preferredVersionIndex : 0;
         renderReaderChatOptions(); void renderCacheReaderPage(); return true;
     }
     async function renderCacheReaderPage() {
-        const stub = cacheReaderRecords[cacheReaderIndex];
+        const group = cacheReaderRecords[cacheReaderIndex];
+        const versions = group?.versions || [];
+        cacheReaderVersionIndex = Math.max(0, Math.min(versions.length - 1, cacheReaderVersionIndex));
+        const stub = versions[cacheReaderVersionIndex];
         if (!stub) return;
         const token = ++cacheReaderRenderToken;
         const image = root.querySelector('#co-cache-preview-image'); image.removeAttribute('src'); image.alt = '正在读取缓存漫画页…';
@@ -2936,10 +2942,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         root.querySelector('#co-cache-preview-image').src = record.dataUrl;
         image.alt = '缓存漫画当前页';
         root.querySelector('#co-cache-preview-title').textContent = record.test ? 'API 测试图片预览' : `聊天漫画 · ${readerChatLabel(record.chatId)}`;
-        root.querySelector('#co-reader-counter').textContent = `${cacheReaderIndex + 1} / ${cacheReaderRecords.length}`;
-        root.querySelector('#co-reader-meta').textContent = record.test ? `API 测试图 · ${record.model || '未知模型'} · ${new Date(record.createdAt).toLocaleString()}` : `第 ${record.targetFloor} 楼 · 漫画第 ${record.pageNumber || 1} 页 · ${record.storyboardPlan?.title || record.storyboardTitle || '未命名漫画'} · ${record.model || '未知模型'} · ${new Date(record.createdAt).toLocaleString()}`;
+        const versionLabel = versions.length > 1 ? ` · 版本 ${cacheReaderVersionIndex + 1}/${versions.length}${cacheReaderVersionIndex === 0 ? '（最新）' : ''}` : '';
+        root.querySelector('#co-reader-counter').textContent = `页 ${cacheReaderIndex + 1}/${cacheReaderRecords.length}${versionLabel}`;
+        root.querySelector('#co-reader-meta').textContent = record.test ? `API 测试图 · ${record.model || '未知模型'} · ${new Date(record.createdAt).toLocaleString()}` : `第 ${record.targetFloor} 楼 · 漫画第 ${record.pageNumber || 1} 页${versionLabel} · ${record.storyboardPlan?.title || record.storyboardTitle || '未命名漫画'} · ${record.model || '未知模型'} · ${new Date(record.createdAt).toLocaleString()}`;
         root.querySelector('#co-reader-prev').disabled = cacheReaderIndex <= 0;
         root.querySelector('#co-reader-next').disabled = cacheReaderIndex >= cacheReaderRecords.length - 1;
+        root.querySelector('#co-reader-version-newer').disabled = cacheReaderVersionIndex <= 0;
+        root.querySelector('#co-reader-version-older').disabled = cacheReaderVersionIndex >= versions.length - 1;
         root.querySelector('#co-reader-prompt').dataset.cacheId = record.id;
     }
     async function openCacheReader(cacheId = '', suppliedRecords = null) {
@@ -2947,7 +2956,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         cacheReaderAllRecords = records;
         const explicit = records.find(record => record.id === cacheId) || null;
         if (explicit?.test) {
-            cacheReaderRecords = [explicit]; cacheReaderIndex = 0; cacheReaderChatId = '';
+            cacheReaderRecords = [{ targetFloor: null, pageNumber: 1, versions: [explicit] }]; cacheReaderIndex = 0; cacheReaderVersionIndex = 0; cacheReaderChatId = '';
             root.querySelector('#co-reader-chat-select').innerHTML = '<option>API 测试图</option>';
             await renderCacheReaderPage();
             const dialog = root.querySelector('#co-cache-preview-dialog'); if (!dialog.open) dialog.showModal();
@@ -2966,7 +2975,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function moveCacheReader(offset) {
         const next = Math.max(0, Math.min(cacheReaderRecords.length - 1, cacheReaderIndex + offset));
         if (next === cacheReaderIndex) return;
-        cacheReaderIndex = next; void renderCacheReaderPage();
+        cacheReaderIndex = next; cacheReaderVersionIndex = 0; void renderCacheReaderPage();
+    }
+    function moveCacheReaderVersion(offset) {
+        const versions = cacheReaderRecords[cacheReaderIndex]?.versions || [];
+        const next = Math.max(0, Math.min(versions.length - 1, cacheReaderVersionIndex + offset));
+        if (next === cacheReaderVersionIndex) return;
+        cacheReaderVersionIndex = next; void renderCacheReaderPage();
     }
     async function renderImageCache() {
         const grid = root.querySelector('#co-cache-grid'); const stats = root.querySelector('#co-cache-stats'); const pageInfo = root.querySelector('#co-cache-page-info');
@@ -3105,9 +3120,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                     const url = await persistImage(result.image, ctx, result.page, { storage: execution.storage, signal }); checkpoint.savedUrls.set(Number(result.page), url); return url;
                 }));
                 ensureNotCanceled(signal); ctx = requireRedrawContext(job);
-                await insertPagesIntoFloor(ctx, job.targetFloor, batch.results.map((result, index) => ({ url: saved[index], cacheId: result.cacheId, page: result.page })), execution.insert);
-                await writeLog('result', '异步重新分镜并重绘完成', { oldCacheId: job.oldCacheId, targetFloor: job.targetFloor, pages: batch.results.length, wallTime: batch.wallTime, profile: execution.drawingProfile.name });
-                finishRemoteProcess(processId, 'success', `已替换 ${batch.results.length} 页 · ${batch.wallTime}`); notify(`第 ${job.targetFloor} 层重新分镜并重绘完成`, 'success');
+                const insertEnabled = execution.insert?.enabled !== false;
+                if (insertEnabled) await insertPagesIntoFloor(ctx, job.targetFloor, batch.results.map((result, index) => ({ url: saved[index], cacheId: result.cacheId, page: result.page })), execution.insert);
+                await writeLog('result', '异步重新分镜并重绘完成', { oldCacheId: job.oldCacheId, targetFloor: job.targetFloor, insertedIntoFloor: insertEnabled, pages: batch.results.length, wallTime: batch.wallTime, profile: execution.drawingProfile.name });
+                const completionText = insertEnabled ? `已替换 ${batch.results.length} 页` : `已保存 ${batch.results.length} 个新版本，未写回正文`;
+                finishRemoteProcess(processId, 'success', `${completionText} · ${batch.wallTime}`); notify(`第 ${job.targetFloor} 层${completionText}`, 'success');
             } else {
                 if (!job.pagePrompt) throw new Error('该缓存缺少原始页分镜提示词，无法单页重绘');
                 const result = checkpoint.singleResult || await callDrawing(job.pagePrompt, { withTiming: true, pageNumber: job.pageNumber, pagePrompt: job.pagePrompt, cacheMeta: { ...cacheMeta, storyboardPlan: job.storyboardPlan }, outputLanguage: execution.outputLanguage || job.storyboardPlan?.language, conf: execution.drawingConf, refs: execution.refs, profile: execution.drawingProfile, signal });
@@ -3117,10 +3134,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const saved = checkpoint.singleSavedUrl || await persistImage(result.image, ctx, job.pageNumber, { storage: execution.storage, signal });
                 checkpoint.singleSavedUrl = saved;
                 ensureNotCanceled(signal); ctx = requireRedrawContext(job);
-                await replaceTaggedPage(ctx, job.targetFloor, job.oldCacheId, { url: saved, cacheId: result.cacheId, page: job.pageNumber }, execution.insert);
+                const insertEnabled = execution.insert?.enabled !== false;
+                if (insertEnabled) await replaceTaggedPage(ctx, job.targetFloor, job.oldCacheId, { url: saved, cacheId: result.cacheId, page: job.pageNumber }, execution.insert);
                 lastImage = result.image; updateDebug();
-                await writeLog('result', '异步漫画单页重绘完成', { oldCacheId: job.oldCacheId, newCacheId: result.cacheId, targetFloor: job.targetFloor, page: job.pageNumber, timing: result.timing, profile: execution.drawingProfile.name });
-                finishRemoteProcess(processId, 'success', `第 ${job.pageNumber} 页已替换 · ${result.timing?.elapsedText || '耗时未知'}`); notify(`第 ${job.pageNumber} 页异步重绘完成`, 'success');
+                await writeLog('result', '异步漫画单页重绘完成', { oldCacheId: job.oldCacheId, newCacheId: result.cacheId, targetFloor: job.targetFloor, page: job.pageNumber, insertedIntoFloor: insertEnabled, timing: result.timing, profile: execution.drawingProfile.name });
+                const completionText = insertEnabled ? `第 ${job.pageNumber} 页已替换` : `第 ${job.pageNumber} 页新版本已保存，未写回正文`;
+                finishRemoteProcess(processId, 'success', `${completionText} · ${result.timing?.elapsedText || '耗时未知'}`); notify(completionText, 'success');
             }
             redrawLocks.delete(job.lockId);
             await renderImageCache().catch(() => {});
@@ -3232,6 +3251,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-clear-cache').addEventListener('click', async () => { if (!confirm('确定清空全部本地图片缓存？正文图片不会删除，但所有正文漫画将失去重绘与提示词查看能力。')) return; await imageCacheClear(); cacheListPage = 1; await writeLog('operation', '清空全部本地图片缓存', { result: '完成' }); await renderImageCache(); });
     root.querySelector('#co-reader-prev').addEventListener('click', () => moveCacheReader(-1));
     root.querySelector('#co-reader-next').addEventListener('click', () => moveCacheReader(1));
+    root.querySelector('#co-reader-version-newer').addEventListener('click', () => moveCacheReaderVersion(-1));
+    root.querySelector('#co-reader-version-older').addEventListener('click', () => moveCacheReaderVersion(1));
     root.querySelector('#co-reader-chat-select').addEventListener('change', event => selectReaderChat(event.target.value));
     root.querySelector('#co-reader-prompt').addEventListener('click', event => {
         const cacheId = event.currentTarget.dataset.cacheId; root.querySelector('#co-cache-preview-dialog').close();
@@ -3240,6 +3261,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-cache-preview-dialog').addEventListener('keydown', event => {
         if (event.key === 'ArrowLeft') { event.preventDefault(); moveCacheReader(-1); }
         if (event.key === 'ArrowRight') { event.preventDefault(); moveCacheReader(1); }
+        if (event.key === 'ArrowUp') { event.preventDefault(); moveCacheReaderVersion(-1); }
+        if (event.key === 'ArrowDown') { event.preventDefault(); moveCacheReaderVersion(1); }
     });
     root.querySelector('#co-reader-stage').addEventListener('touchstart', event => {
         const touch = event.changedTouches[0]; cacheReaderTouchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
@@ -3248,6 +3271,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const touch = event.changedTouches[0]; if (!touch || !cacheReaderTouchStart) return;
         const dx = touch.clientX - cacheReaderTouchStart.x; const dy = touch.clientY - cacheReaderTouchStart.y; cacheReaderTouchStart = null;
         if (Math.abs(dx) >= 45 && Math.abs(dx) > Math.abs(dy) * 1.2) moveCacheReader(dx < 0 ? 1 : -1);
+        else if (Math.abs(dy) >= 45 && Math.abs(dy) > Math.abs(dx) * 1.2) moveCacheReaderVersion(dy < 0 ? 1 : -1);
     }, { passive: true });
     root.querySelector('#co-clear-processes').addEventListener('click', () => { const retained = remoteProcesses.filter(process => ['running', 'paused'].includes(process.status)); remoteProcesses.splice(0, remoteProcesses.length, ...retained); renderProcessCenter(); });
     root.querySelector('#co-redraw-confirm').addEventListener('click', executeRedraw);
@@ -3256,6 +3280,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-debug-enabled').addEventListener('change', async () => { const enabled = checked('co-debug-enabled'); settings.debug.enabled = enabled; save(); await writeLog('operation', `DEBUG 模式已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续记录完整文本与结构化参数；图片二进制仍排除' : '后续只记录操作与结果简写' }); });
     root.querySelector('#co-capture-model-io').addEventListener('change', async () => { const enabled = checked('co-capture-model-io'); settings.debug.captureModelIo = enabled; save(); await writeLog('operation', `大模型完整输入输出记录已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续成功与失败的演绎、分镜和绘画调用均保存完整文本；图片二进制与密钥排除' : '后续成功调用恢复简写；语义失败仍保留强制诊断' }); });
     root.querySelector('#co-enable-run-cooldown').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
+    root.querySelector('#co-insert-into-floor').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
     root.querySelectorAll('.co-tab').forEach(tab => tab.addEventListener('click', () => { root.querySelectorAll('.co-tab,.co-page').forEach(x => x.classList.remove('active')); tab.classList.add('active'); root.querySelector(`.co-page[data-page="${tab.dataset.page}"]`).classList.add('active'); if (tab.dataset.page === 'cache') renderImageCache(); if (tab.dataset.page === 'processes') renderProcessCenter(); if (tab.dataset.page === 'debug') refreshLogs().catch(error => notify(error.message, 'error')); }));
     root.querySelectorAll('input,textarea,select').forEach(el => { if (!el.classList.contains('co-ref-hint') && !el.classList.contains('co-ref-file')) el.addEventListener('change', () => { try { syncSettingsFromUi(); } catch {} }); });
     document.addEventListener('pointerdown', event => { if (!event.target.closest(`#${ROOT_ID} .co-model-row`)) closeModelOptions(); });
@@ -3294,7 +3319,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     makeDraggable(root.querySelector('#co-fab'), root.querySelector('#co-fab'), 'fab', true);
     makeDraggable(root.querySelector('#co-head'), root.querySelector('#co-panel'), 'panel');
     for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) { const pos = settings[key]; if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) { const el = root.querySelector(selector); el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`; } }
-    renderRegexList(); refreshLogs().catch(() => {});
+    renderRegexList(); renderRunCooldown(); refreshLogs().catch(() => {});
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
     migrateLegacyTaggedMarkdown().catch(error => console.warn('[漫画工房] 旧版正文漫画标识迁移失败', error));
     void checkLocalProxyStatus();
