@@ -8,25 +8,25 @@
 
 ## 安装
 
-### 第三方扩展目录
+### 在线安装（推荐）
 
-把整个 `comic-orb` 文件夹放到：
+点击 SillyTavern 顶部的扩展图标，选择“安装扩展程序”，在弹出框内填入链接：
+
+```text
+https://github.com/gemini114514/comic-orb
+```
+
+然后点击“安装”即可。
+
+### 本地安装
+
+下载仓库，把整个 `comic-orb` 文件夹放到：
 
 ```text
 SillyTavern/public/scripts/extensions/third-party/comic-orb
 ```
 
-重启 SillyTavern，刷新浏览器。右下角出现铅笔悬浮球即安装成功。
-
-### jsDelivr 单行加载
-
-公开仓库发布后可在酒馆前端脚本中加载固定版本：
-
-```js
-import 'https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.23.0/index.js';
-```
-
-建议固定版本号，不要在长期使用环境引用 `main`。
+重启 SillyTavern 并刷新浏览器。右下角出现铅笔悬浮球即安装成功。
 
 ## 第一次配置
 
@@ -145,5 +145,3 @@ README.md                本文档
 ## 版本
 
 当前版本：`1.23.0`
-
-版本标签建议使用 `v1.23.0`。jsDelivr 固定版本地址在公开 GitHub tag 创建后自动可用。
