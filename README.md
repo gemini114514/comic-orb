@@ -74,6 +74,8 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 
 分镜预设内置两档 Gemini 适配：“少年漫软适配（表现力最大）”尽量保留战斗与关系张力；“少年漫安全适配（成功率优先）”只把高风险局部转换成剪影、遮挡、冲击反馈与明确结果镜头。升级不会自动切换现有选择，可按题材自行选用。
 
+当 API Base URL 指向本地 `gemini-web-to-api`（`127.0.0.1:4981/openai` 或 `localhost:4981/openai`）时，每个演绎、分镜和绘画 API 实例都可独立选择匿名/临时会话；开启后该次请求不会写入 Gemini 网页对话历史。日志页会直接显示最近一次大模型 API 原始 JSON 响应，图片 base64 与鉴权信息仍会自动省略。
+
 API Key 只保存在当前浏览器 `localStorage`。导出的 API 实例 JSON 会包含 Key，请勿公开。
 
 ## 生成漫画
@@ -176,7 +178,7 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.25.5`
+当前版本：`1.25.6`
 
 ### TT 酒馆与代码渲染兼容
 

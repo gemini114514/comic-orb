@@ -390,7 +390,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             testPrompt: DEFAULT_STORYBOARD_TEST_PROMPT,
             systemPrompt: DEFAULT_STORYBOARD_SYSTEM_PROMPT,
             adaptationPrompt: DEFAULT_ADAPTATION_SYSTEM_PROMPT,
-            extraBody: '{}', extraHeaders: '{}', minPages: 1, maxPages: 2, minPanels: 2, maxPanels: 6
+            extraBody: '{}', extraHeaders: '{}', temporarySession: true, minPages: 1, maxPages: 2, minPanels: 2, maxPanels: 6
         },
         adaptation: {
             baseUrl: 'https://api.openai.com', path: '/v1/chat/completions', apiKey: '', model: 'gpt-4.1-mini', temperature: 0.4,
@@ -398,13 +398,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             maxOutputTokens: 65536, maxOutputTokenField: 'auto', reasoningEffort: 'low', thinkingMode: 'default',
             testPrompt: DEFAULT_ADAPTATION_TEST_PROMPT,
             systemPrompt: DEFAULT_ADAPTATION_SYSTEM_PROMPT,
-            extraBody: '{}', extraHeaders: '{}'
+            extraBody: '{}', extraHeaders: '{}', temporarySession: true
         },
         drawing: {
             baseUrl: 'https://api.openai.com', path: '/v1/images/generations', apiKey: '', model: 'gpt-image-1', mode: 'images', size: '1024x1536',
             modelsPath: '/v1/models',
             testPrompt: DEFAULT_DRAWING_TEST_PROMPT,
-            promptPrefix: '绘制一页完成度高、构图清晰的漫画。', extraBody: '{}', extraHeaders: '{}', sendReferences: true,
+            promptPrefix: '绘制一页完成度高、构图清晰的漫画。', extraBody: '{}', extraHeaders: '{}', temporarySession: true, sendReferences: true,
             quality: '', outputFormat: '', outputCompression: '', background: '', inputFidelity: '', useLocalProxy: true, requestTimeoutSeconds: 600
         },
         apiProfiles: { adaptation: [], storyboard: [], drawing: [] },
@@ -502,6 +502,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let busy = false;
     let lastStoryboard = '';
     let lastImage = '';
+    let lastRawApiResponse = '尚未收到大模型 API 响应。';
     let lastModelReasoning = '尚未收到分镜或演绎 API 响应。';
     let lastApiTiming = null;
     let activeRedrawCacheId = '';
@@ -573,6 +574,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 promptPrefix: '绘制一页完成度高、构图清晰的竖版2:3漫画。必须保持竖向画布，不得输出横版；严格遵循分格、对白、角色服装与连续性。',
                 extraBody: '{"image_response_format":"b64_json"}',
                 extraHeaders: '{}',
+                temporarySession: true,
                 sendReferences: true,
                 quality: '', outputFormat: '', outputCompression: '', background: '', inputFidelity: '',
                 useLocalProxy: false,
@@ -865,7 +867,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function apiExtras(conf) {
         const extra = safeJson(conf.extraBody, null);
         if (extra === null || Array.isArray(extra)) throw new Error('额外请求体不是有效 JSON 对象');
-        return extra;
+        return isLocalGeminiWebConfig(conf)
+            ? { temporary: conf.temporarySession !== false, ...extra }
+            : extra;
     }
     function normalizeMaxOutputTokens(value) {
         const parsed = Number(value);
@@ -979,6 +983,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const text = await response.text();
             const data = safeJson(text, null);
             const elapsedMs = Math.round(performance.now() - started);
+            if (isModelApiOperation(operation)) rememberRawApiResponse(operation, response.status, data ?? text);
             if (!response.ok) {
                 const providerCode = String(data?.code || data?.error?.code || '');
                 const providerMessage = `${providerCode ? `${providerCode}: ` : ''}${String(data?.error?.message || data?.message || text)}`.slice(0, 500);
@@ -2846,6 +2851,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="refs"><div class="co-callout">参考图以命名预设管理，每套最多四张图及对应提示词。参考图只发送给启用了参考图的绘画 AI，不发送给演绎或分镜 AI；图片和预设均保存在当前浏览器 IndexedDB。</div><div class="co-profile-manager co-ref-preset-manager"><div class="co-profile-top"><label class="co-field"><span>参考图预设</span><select id="co-ref-preset"></select></label><label class="co-field"><span>预设名称</span><input id="co-ref-preset-name" placeholder="例如：主角常服"></label></div><div class="co-profile-actions"><button class="co-mini" id="co-ref-preset-new" type="button">新建</button><button class="co-mini co-test" id="co-ref-preset-save" type="button">保存修改</button><button class="co-mini co-danger" id="co-ref-preset-delete" type="button">删除</button><button class="co-mini" id="co-import-refs" type="button">导入预设库</button><input id="co-import-refs-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-refs" type="button">导出预设库</button></div><div class="co-ref-preset-state" id="co-ref-preset-state">正在读取预设…</div></div><div id="co-refs"></div></div>
           <div class="co-page" data-page="adaptation">${apiProfileManager('ad', 'adaptation')}<div class="co-grid">
             ${apiFields('ad', settings.adaptation)}
+            <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="ad-temporary" type="checkbox" ${settings.adaptation.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
             <label class="co-field"><span>Temperature</span><input id="ad-temperature" type="number" min="0" max="2" step="0.1" value="${esc(settings.adaptation.temperature)}"></label>
             <label class="co-field"><span>最大输出 Token</span><input id="ad-max-output-tokens" type="number" min="0" max="1048576" step="1" value="${esc(settings.adaptation.maxOutputTokens ?? 65536)}"></label>
             <label class="co-field"><span>输出上限参数名</span><select id="ad-max-output-token-field"><option value="auto" ${settings.adaptation.maxOutputTokenField === 'auto' || !settings.adaptation.maxOutputTokenField ? 'selected' : ''}>自动选择</option><option value="max_tokens" ${settings.adaptation.maxOutputTokenField === 'max_tokens' ? 'selected' : ''}>max_tokens</option><option value="max_completion_tokens" ${settings.adaptation.maxOutputTokenField === 'max_completion_tokens' ? 'selected' : ''}>max_completion_tokens</option></select></label>
@@ -2860,6 +2866,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           </div></div>
           <div class="co-page" data-page="story">${apiProfileManager('sb', 'storyboard')}<div class="co-grid">
             ${apiFields('sb', settings.storyboard)}
+            <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="sb-temporary" type="checkbox" ${settings.storyboard.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
             <label class="co-field"><span>Temperature</span><input id="sb-temperature" type="number" min="0" max="2" step="0.1" value="${esc(settings.storyboard.temperature)}"></label>
             <label class="co-field"><span>最大输出 Token</span><input id="sb-max-output-tokens" type="number" min="0" max="1048576" step="1" value="${esc(settings.storyboard.maxOutputTokens ?? 65536)}" placeholder="65536"></label>
             <label class="co-field"><span>输出上限参数名</span><select id="sb-max-output-token-field"><option value="auto" ${settings.storyboard.maxOutputTokenField === 'auto' || !settings.storyboard.maxOutputTokenField ? 'selected' : ''}>自动选择</option><option value="max_tokens" ${settings.storyboard.maxOutputTokenField === 'max_tokens' ? 'selected' : ''}>max_tokens</option><option value="max_completion_tokens" ${settings.storyboard.maxOutputTokenField === 'max_completion_tokens' ? 'selected' : ''}>max_completion_tokens</option></select></label>
@@ -2879,6 +2886,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           </div></div>
           <div class="co-page" data-page="draw">${apiProfileManager('dr', 'drawing')}<div class="co-grid">
             ${apiFields('dr', settings.drawing)}
+            <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="dr-temporary" type="checkbox" ${settings.drawing.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
             <label class="co-field"><span>调用模式</span><select id="dr-mode"><option value="images">OpenAI 自动（推荐）</option><option value="edits">强制 Edits multipart</option><option value="chat">Chat 多模态</option><option value="gemini">Gemini 原生 generateContent</option></select></label>
             <label class="co-field"><span>尺寸</span><input id="dr-size" value="${esc(settings.drawing.size)}"></label>
             <label class="co-field"><span>GPT Image 质量</span><select id="dr-quality"><option value="">不发送（服务默认）</option><option value="auto">auto</option><option value="low">low（速度优先）</option><option value="medium">medium</option><option value="high">high</option></select></label>
@@ -2925,7 +2933,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <div class="co-cache-grid" id="co-cache-grid"></div>
             <nav class="co-cache-pagination" aria-label="缓存分页"><button class="co-mini" id="co-cache-page-prev" type="button">← 上一页</button><span id="co-cache-page-info">第 1 / 1 页</span><button class="co-mini" id="co-cache-page-next" type="button">下一页 →</button></nav>
           </div>
-          <div class="co-page" data-page="debug"><label class="co-check co-debug-toggle"><input id="co-debug-enabled" type="checkbox" ${settings.debug.enabled ? 'checked' : ''}>DEBUG 结构化日志（记录所有操作的完整文本与参数）</label><label class="co-check co-debug-toggle"><input id="co-capture-model-io" type="checkbox" ${settings.debug.captureModelIo !== false ? 'checked' : ''}>始终保存大模型完整输入输出（推荐；成功与失败均记录，图片二进制和密钥排除）</label><div class="co-api-actions"><button class="co-mini" id="co-refresh-logs" type="button">刷新摘要</button><button class="co-mini co-test" id="co-export-model-io" type="button">导出大模型输入输出</button><button class="co-mini" id="co-export-logs-all" type="button">导出全部日志</button><button class="co-mini" id="co-export-logs-last10" type="button">导出最近10条</button><button class="co-mini co-danger" id="co-clear-logs" type="button">清空日志</button></div><div class="co-callout">日志页面始终只显示最近200条轻量摘要，不展开大对象。“导出大模型输入输出”会跨越普通操作日志，导出全部演绎、分镜与绘画 API 请求/响应，不受最近10条限制；实际 system/user prompt 和模型文本响应会完整保留，鉴权字段与所有图片 base64 仍会清理为摘要。</div><div class="co-log-list" id="co-log-view"></div><label class="co-field" style="margin-top:12px"><span>最近一次已校验分镜 JSON</span><textarea id="co-last-story" readonly></textarea></label><label class="co-field" style="margin-top:12px"><span>最近一次分页图片摘要</span><textarea id="co-last-image" readonly></textarea></label><div id="co-image-preview"></div></div>
+          <div class="co-page" data-page="debug"><label class="co-check co-debug-toggle"><input id="co-debug-enabled" type="checkbox" ${settings.debug.enabled ? 'checked' : ''}>DEBUG 结构化日志（记录所有操作的完整文本与参数）</label><label class="co-check co-debug-toggle"><input id="co-capture-model-io" type="checkbox" ${settings.debug.captureModelIo !== false ? 'checked' : ''}>始终保存大模型完整输入输出（推荐；成功与失败均记录，图片二进制和密钥排除）</label><div class="co-api-actions"><button class="co-mini" id="co-refresh-logs" type="button">刷新摘要</button><button class="co-mini co-test" id="co-export-model-io" type="button">导出大模型输入输出</button><button class="co-mini" id="co-export-logs-all" type="button">导出全部日志</button><button class="co-mini" id="co-export-logs-last10" type="button">导出最近10条</button><button class="co-mini co-danger" id="co-clear-logs" type="button">清空日志</button></div><div class="co-callout">日志页面始终只显示最近200条轻量摘要，不展开大对象。“导出大模型输入输出”会跨越普通操作日志，导出全部演绎、分镜与绘画 API 请求/响应，不受最近10条限制；实际 system/user prompt 和模型文本响应会完整保留，鉴权字段与所有图片 base64 仍会清理为摘要。</div><div class="co-log-list" id="co-log-view"></div><label class="co-field" style="margin-top:12px"><span>最近一次大模型 API 原始响应（图片 base64 自动省略）</span><textarea id="co-last-raw-response" readonly></textarea></label><label class="co-field" style="margin-top:12px"><span>最近一次已校验分镜 JSON</span><textarea id="co-last-story" readonly></textarea></label><label class="co-field" style="margin-top:12px"><span>最近一次分页图片摘要</span><textarea id="co-last-image" readonly></textarea></label><div id="co-image-preview"></div></div>
         </main>
       </section>
       <dialog class="co-dialog co-full-setup-dialog" id="co-full-setup-dialog"><form method="dialog"><header><strong>完整模式 · 只需在酒馆主机安装一次</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">手机、平板和其他浏览器不需要重复安装。请选择 SillyTavern 后端实际运行的位置，而不是你现在拿来打开网页的设备。</div><nav class="co-dialog-tabs"><button class="active" data-setup-page="pc" type="button">PC 直接用</button><button data-setup-page="phone" type="button">手机直接用</button><button data-setup-page="remote" type="button">远程用</button></nav><section class="co-dialog-page active" data-setup-page="pc"><h3>酒馆运行在 Windows 电脑</h3><ol><li>打开漫画球扩展文件夹。</li><li>双击 <code>install-server-plugin.bat</code>。</li><li>安装器会自动备份配置；酒馆重启后回到这里点“重新检测”。</li></ol><div class="co-callout">常见位置：<code>SillyTavern/public/scripts/extensions/third-party/comic-orb</code></div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="pc" type="button">复制文件位置</button></div></section><section class="co-dialog-page" data-setup-page="phone"><h3>酒馆本身运行在 Android Termux</h3><p>在 Termux 粘贴下面的一行，它会自动寻找漫画球并执行安装：</p><pre id="co-phone-setup-command">p="$(find "$HOME" -type f -path '*/comic-orb/install-server-plugin.sh' -print -quit 2&gt;/dev/null)" &amp;&amp; [ -n "$p" ] &amp;&amp; sh "$p"</pre><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="phone" type="button">复制 Termux 命令</button></div></section><section class="co-dialog-page" data-setup-page="remote"><h3>手机访问的是电脑、NAS、VPS 或 Docker 酒馆</h3><p>手机无需安装任何东西。只需由酒馆主机管理员登录服务器，在漫画球目录运行安装脚本一次；之后所有手机和电脑用户都会自动使用完整模式。</p><pre id="co-remote-setup-command">sh /你的/SillyTavern/漫画球目录/install-server-plugin.sh /你的/SillyTavern</pre><div class="co-callout">Docker 用户需要在保存 SillyTavern 文件的主机或容器内执行；安装完成后重启该酒馆容器。</div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="remote" type="button">复制远程命令模板</button></div></section><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button></div></form></dialog>
@@ -3016,6 +3024,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const prefix = apiKindPrefix(kind); const conf = settings[kind]; const set = (suffix, value) => { const el = root.querySelector(`#${prefix}-${suffix}`); if (el) el.value = value ?? ''; };
         set('base', conf.baseUrl); set('path', conf.path); set('models-path', conf.modelsPath); set('key', conf.apiKey); set('model', conf.model); set('headers', conf.extraHeaders); set('extra', conf.extraBody);
         set('test-prompt', conf.testPrompt); modelCandidates[prefix] = []; root.querySelector(`#${prefix}-model-options`)?.classList.remove('open');
+        const temporary = root.querySelector(`#${prefix}-temporary`); if (temporary) temporary.checked = conf.temporarySession !== false;
         if (kind !== 'drawing') {
             set('temperature', conf.temperature); set('max-output-tokens', conf.maxOutputTokens ?? 65536); set('max-output-token-field', conf.maxOutputTokenField || 'auto'); set('reasoning-effort', conf.reasoningEffort || 'low'); set('thinking-mode', conf.thinkingMode || 'default'); set('system', conf.systemPrompt);
             if (kind === 'storyboard') { set('min-pages', conf.minPages); set('max-pages', conf.maxPages); set('min-panels', conf.minPanels); set('max-panels', conf.maxPanels); }
@@ -3250,9 +3259,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(val('co-cache-preview-limit'));
         settings.storage.maxCacheMb = normalizeMaxCacheMb(val('co-cache-max-mb'));
         settings.storage.autoCleanup = checked('co-cache-auto-cleanup');
-        settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers') };
-        settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers') };
-        settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), sendReferences: checked('dr-sendrefs') };
+        settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary') };
+        settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
+        settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs') };
         save();
     }
     function val(id) { return root.querySelector(`#${id}`)?.value ?? ''; }
@@ -3293,10 +3302,19 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function updateDebug() {
         const images = Array.isArray(lastImage) ? lastImage : (lastImage ? [lastImage] : []);
+        const raw = root.querySelector('#co-last-raw-response'); if (raw) raw.value = lastRawApiResponse;
         const reasoning = root.querySelector('#co-last-reasoning'); if (reasoning) reasoning.value = lastModelReasoning;
         root.querySelector('#co-last-story').value = lastStoryboard;
         root.querySelector('#co-last-image').value = images.map((src, index) => `第 ${index + 1} 页：${String(src).startsWith('data:') ? `本地 data URL · ${formatBytes(dataUrlBytes(src))}` : String(src).slice(0, 240)}`).join('\n');
         root.querySelector('#co-image-preview').innerHTML = images.map((src, index) => `<figure><figcaption>第 ${index + 1} 页</figcaption><img class="co-preview" src="${esc(src)}"></figure>`).join('');
+    }
+    function rememberRawApiResponse(operation, status, value) {
+        const safeValue = sanitizeLogValue(value);
+        let body;
+        try { body = typeof safeValue === 'string' ? safeValue : JSON.stringify(safeValue, null, 2); }
+        catch { body = String(safeValue); }
+        lastRawApiResponse = `${operation}\nHTTP ${status || 0}\n\n${body}`;
+        updateDebug();
     }
     async function testRegex() {
         try {
