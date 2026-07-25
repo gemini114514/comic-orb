@@ -18,13 +18,7 @@ https://github.com/gemini114514/comic-orb
 
 然后点击“安装”即可。
 
-首次安装还需要启用仓库随附的正式服务端插件：
-
-1. 打开已安装的 `comic-orb` 扩展目录；
-2. Windows 双击 `install-server-plugin.bat`；Linux/macOS 在该目录执行 `sh install-server-plugin.sh /你的/SillyTavern/目录`；
-3. 完全重启 SillyTavern。
-
-安装器只会把本仓库中的 `server-plugins/comic-orb` 链接到 SillyTavern 官方 `plugins` 目录、备份 `config.yaml`，并开启官方的 `enableServerPlugins` 开关。浏览器扩展安装器按 SillyTavern 的安全设计不能自行执行服务端代码，因此这一步只需人工确认一次；以后正常更新漫画球无需再次安装。
+安装完成后默认进入**基础模式**，无需安装后端组件，刷新页面即可直接使用。
 
 ### 本地安装
 
@@ -34,7 +28,30 @@ https://github.com/gemini114514/comic-orb
 SillyTavern/public/scripts/extensions/third-party/comic-orb
 ```
 
-随后运行同目录的服务端插件安装脚本并完全重启 SillyTavern。右下角出现铅笔悬浮球，且主页“后端路由”显示就绪，即安装成功。
+重启 SillyTavern 并刷新浏览器。右下角出现铅笔悬浮球即安装成功。
+
+## 基础模式与完整模式
+
+### 基础模式（默认，安装即用）
+
+浏览器直接请求用户配置的 API，不需要修改 SillyTavern，也不需要安装服务端组件。适合先体验、短任务以及允许浏览器跨域访问的 API。
+
+顶部会持续提示两项限制：
+
+- 超过约 300 秒的请求可能被浏览器、酒馆入口或中间代理断开；
+- 部分 API 不允许浏览器跨域携带鉴权信息，此时会显示网络或 CORS 错误。
+
+### 完整模式（慢速生图推荐）
+
+完整模式使用仓库随附的正式 SillyTavern 服务端插件，支持最长 1800 秒请求、参考图 Multipart 转发和取消上游任务。只需在**运行 SillyTavern 后端的主机**安装一次，访问该酒馆的手机、平板和其他电脑不需要重复安装。
+
+打开漫画球主页，点击“完整模式安装”，按实际情况选择：
+
+- **PC 直接用**：酒馆运行在 Windows 电脑；打开漫画球目录并双击 `install-server-plugin.bat`。
+- **手机直接用**：酒馆本身运行在 Android Termux；复制向导提供的一行 Termux 命令。
+- **远程用**：酒馆运行在电脑、NAS、VPS 或 Docker；由主机管理员在服务器运行 `install-server-plugin.sh`，手机端无需操作。
+
+安装脚本会链接本仓库的 `server-plugins/comic-orb`、备份 `config.yaml` 并开启官方 `enableServerPlugins` 开关。完成后重启酒馆，在漫画球顶部选择“完整模式”并重新检测。以后正常更新漫画球无需重复安装。
 
 如需卸载服务端部分，Windows 双击 `uninstall-server-plugin.bat`；Linux/macOS 执行 `sh uninstall-server-plugin.sh /你的/SillyTavern/目录`。卸载器只移除漫画球链接，不会关闭其他服务端插件。
 
@@ -157,4 +174,4 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.24.0`
+当前版本：`1.25.0`

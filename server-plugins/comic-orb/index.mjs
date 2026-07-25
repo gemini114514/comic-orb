@@ -6,7 +6,7 @@ import fetch from 'node-fetch';
 export const info = {
     id: 'comic-orb',
     name: 'Comic Orb Relay',
-    version: '1.24.0',
+    version: '1.25.0',
     description: 'Restricted OpenAI-compatible text and long-running image relay for the Comic Orb extension.',
 };
 

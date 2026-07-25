@@ -325,11 +325,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const style = document.createElement('link');
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
-        style.href = new URL('./style.css?v=20260725-ai-regex-user-floors-1', import.meta.url).href;
+        style.href = new URL('./style.css?v=20260725-basic-full-mode-1', import.meta.url).href;
         document.head.appendChild(style);
     }
 
     const defaults = {
+        backendMode: 'basic',
         range: '',
         outputLanguage: 'zh-CN',
         workflowMode: 'direct',
@@ -385,7 +386,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         for (const [k, v] of Object.entries(b || {})) out[k] = v && typeof v === 'object' && !Array.isArray(v) && typeof out[k] === 'object' ? merge(out[k], v) : v;
         return out;
     };
-    let settings = merge(defaults, safeJson(localStorage.getItem(STORE_KEY), {}));
+    const storedSettings = safeJson(localStorage.getItem(STORE_KEY), {});
+    let settings = merge(defaults, storedSettings);
+    settings.backendMode = Object.hasOwn(storedSettings, 'backendMode')
+        ? (storedSettings.backendMode === 'full' ? 'full' : 'basic')
+        : (Object.keys(storedSettings).length ? 'full' : 'basic');
     settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
     settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(settings.storage.cachePreviewLimit);
     settings.storage.maxCacheMb = normalizeMaxCacheMb(settings.storage.maxCacheMb);
@@ -718,9 +723,23 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         try { return await probeServerPlugin(); }
         catch (error) { throw new Error(`Comic Orb Server Plugin 未加载（${error.message}）。请运行漫画球目录中的 install-server-plugin.bat，并完全重启 SillyTavern`); }
     }
+    function backendModeFor(conf = null) {
+        return conf?.backendMode === 'full' || (!conf?.backendMode && settings.backendMode === 'full') ? 'full' : 'basic';
+    }
+    function renderBackendModeControls() {
+        const localProxy = document.querySelector(`#${ROOT_ID} #dr-local-proxy`);
+        if (!localProxy) return;
+        localProxy.disabled = settings.backendMode !== 'full';
+        localProxy.closest('label').title = localProxy.disabled ? '完整模式下才会使用酒馆服务端长任务代理' : '';
+    }
     async function checkLocalProxyStatus() {
         const box = document.querySelector(`#${ROOT_ID} #co-proxy-health`); const text = document.querySelector(`#${ROOT_ID} #co-proxy-health-text`);
         if (!box || !text) return false;
+        if (settings.backendMode !== 'full') {
+            box.className = 'co-proxy-health co-proxy-disabled';
+            text.textContent = '基础模式已启用：安装前端后即可直接请求 API；超过约 300 秒的请求可能被浏览器、酒馆入口或中间代理断开，部分 API 还可能阻止浏览器跨域访问。';
+            return true;
+        }
         box.className = 'co-proxy-health co-proxy-checking'; text.textContent = '正在检测 Comic Orb Server Plugin…';
         let relay;
         try { relay = await probeServerPlugin(true); }
@@ -767,8 +786,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         text.textContent = `Comic Orb Server Plugin v${relay.version || '?'} 已就绪（默认 ${relay.default_timeout_seconds || 600} 秒，允许上限 ${relay.max_timeout_seconds || 1800} 秒${relay.client_cancel_propagates ? '，支持取消上游请求' : ''}）`;
         return true;
     }
-    function drawingUsesLocalProxy(conf = settings.drawing) { return conf.useLocalProxy !== false && ['images', 'edits'].includes(String(conf.mode || 'images')); }
+    function drawingUsesLocalProxy(conf = settings.drawing) { return backendModeFor(conf) === 'full' && conf.useLocalProxy !== false && ['images', 'edits'].includes(String(conf.mode || 'images')); }
     async function requireLocalProxyReady(conf = settings.drawing) {
+        if (backendModeFor(conf) !== 'full') return;
         await requireServerPluginReady();
         if (!drawingUsesLocalProxy(conf)) return;
         if (isLocalGeminiWebConfig(conf) && !await checkLocalProxyStatus()) throw new Error('本地 Gemini 服务未就绪，请检查会话状态');
@@ -924,7 +944,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
     }
     async function providerApiFetch(conf, url, options, operation = 'API 请求', validateResponse = null) {
-        if (!shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse);
+        if (backendModeFor(conf) !== 'full' || !shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse);
         await requireServerPluginReady();
         const requestHeaders = Object.fromEntries(new Headers(options?.headers || {}).entries());
         delete requestHeaders.authorization;
@@ -2112,7 +2132,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     async function callDrawingEdits(conf, finalPrompt, activeRefs, options = {}) {
         const extras = apiExtras(conf); const fields = { model: conf.model, prompt: finalPrompt, ...(String(conf.size || '').trim() ? { size: conf.size } : {}), n: 1, ...imageApiOptions(conf, true), ...extras };
         const requestRefs = options.test ? [{ dataUrl: makeTestImage(), name: 'api-test.png' }] : activeRefs;
-        if (conf.useLocalProxy !== false) return callDrawingThroughLocalProxy(conf, 'edits', fields, requestRefs, options);
+        if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'edits', fields, requestRefs, options);
         const form = new FormData(); form.append('model', conf.model); form.append('prompt', finalPrompt);
         if (String(conf.size || '').trim()) form.append('size', conf.size);
         form.append('n', '1');
@@ -2176,7 +2196,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         // 向后兼容原来的 images 值：有参考图时自动切换为实测兼容的 multipart image[] Edits 协议。
         if (activeRefs.length) return callDrawingEdits(conf, finalPrompt, activeRefs, options);
         const body = { model: conf.model, prompt: finalPrompt, n: 1, ...(String(conf.size || '').trim() ? { size: conf.size } : {}), ...imageApiOptions(conf), ...apiExtras(conf) };
-        if (conf.useLocalProxy !== false) return callDrawingThroughLocalProxy(conf, 'generations', body, [], options);
+        if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'generations', body, [], options);
         const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload);
         return drawingResult(data, conf, finalPrompt, options);
     }
@@ -2403,6 +2423,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
 
     function productionExecutionSnapshot() {
         const adaptationProfile = activeApiProfile('adaptation'); const storyboardProfile = activeApiProfile('storyboard'); const drawingProfile = activeApiProfile('drawing');
+        const backendMode = settings.backendMode === 'full' ? 'full' : 'basic';
         return {
             range: String(settings.range), includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
@@ -2410,7 +2431,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            adaptationConf: clone(settings.adaptation), storyboardConf: clone(settings.storyboard), drawingConf: clone(settings.drawing), refs: snapshotRefs(),
+            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
@@ -2569,7 +2590,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         <header class="co-head" id="co-head"><strong>漫画工房</strong><small>剧情 → 分镜 AI → 绘画 AI → 写回楼层</small><button class="co-icon" id="co-close" title="关闭">×</button></header>
         <nav class="co-tabs"><button class="co-tab active" data-page="make">制作</button><button class="co-tab" data-page="processes">后台进程 <span class="co-process-badge" id="co-process-badge" hidden>0</span></button><button class="co-tab" data-page="refs">参考图</button><button class="co-tab" data-page="adaptation">演绎 API</button><button class="co-tab" data-page="story">分镜 API</button><button class="co-tab" data-page="draw">绘画 API</button><button class="co-tab" data-page="settings">设置</button><button class="co-tab" data-page="cache">缓存</button><button class="co-tab" data-page="debug">日志 / 结果</button></nav>
         <main class="co-body">
-          <div class="co-page active" data-page="make"><div class="co-proxy-health co-proxy-checking" id="co-proxy-health"><strong>本地后端 / 会话</strong><span id="co-proxy-health-text">正在检测后端路由或 Gemini 会话…</span><button class="co-mini" id="co-proxy-recheck" type="button">重新检测</button></div><div class="co-grid">
+          <div class="co-page active" data-page="make"><div class="co-proxy-health co-proxy-checking" id="co-proxy-health"><strong>API 连接模式</strong><span id="co-proxy-health-text">正在读取连接模式…</span><div class="co-mode-controls"><select id="co-backend-mode" aria-label="API 连接模式"><option value="basic" ${settings.backendMode !== 'full' ? 'selected' : ''}>基础模式</option><option value="full" ${settings.backendMode === 'full' ? 'selected' : ''}>完整模式</option></select><button class="co-mini" id="co-proxy-recheck" type="button">重新检测</button><button class="co-mini co-test" id="co-full-setup" type="button">完整模式安装</button></div></div><div class="co-grid">
             <label class="co-field"><span>楼层范围（闭区间）</span><input id="co-range" placeholder="例如 10-12" value="${esc(settings.range)}"></label>
             <label class="co-field"><span>分镜工作流模式</span><select id="co-workflow-mode"><option value="direct" ${settings.workflowMode !== 'interpretive' ? 'selected' : ''}>直接分镜模式</option><option value="interpretive" ${settings.workflowMode === 'interpretive' ? 'selected' : ''}>演绎分镜模式</option></select></label>
             <label class="co-field"><span>演绎模式总页数最少</span><input id="co-interpretive-min-pages" type="number" min="1" max="20" value="${esc(settings.interpretivePageRange?.min ?? 2)}"></label>
@@ -2637,6 +2658,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <div class="co-full co-api-actions"><button class="co-mini co-test" id="dr-test" type="button">发送测试提示词</button><span class="co-api-status" id="dr-api-status">尚未测试</span></div>
           </div></div>
           <div class="co-page" data-page="settings">
+            <div class="co-callout"><strong>基础模式与完整模式</strong><br>基础模式安装扩展后立即可用，API 请求由当前浏览器直接发送；约 300 秒以上的请求可能被浏览器、酒馆入口或中间代理断开，并取决于 API 是否允许浏览器跨域。完整模式通过酒馆主机上的服务端组件中继，支持最长 1800 秒、参考图 Multipart 和取消上游请求。模式会随每个后台任务冻结，运行中切换不会改变已经提交的任务。</div>
             <label class="co-check co-debug-toggle"><input id="co-enable-redraw" type="checkbox" ${settings.interaction.doubleClickRedraw ? 'checked' : ''}>正文漫画图双击打开“重绘 / 实际提示词”详情弹窗</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-immediate-work" type="checkbox" ${settings.interaction.doubleClickImmediate !== false ? 'checked' : ''}>双击无图片的非User对话楼层，立即启动直接分镜后台任务</label>
             <label class="co-check co-debug-toggle"><input id="co-enable-run-cooldown" type="checkbox" ${settings.interaction.runSubmitCooldown !== false ? 'checked' : ''}>启用制作按钮 5 秒防重复点击</label>
@@ -2658,6 +2680,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="debug"><label class="co-check co-debug-toggle"><input id="co-debug-enabled" type="checkbox" ${settings.debug.enabled ? 'checked' : ''}>DEBUG 结构化日志（记录所有操作的完整文本与参数）</label><label class="co-check co-debug-toggle"><input id="co-capture-model-io" type="checkbox" ${settings.debug.captureModelIo !== false ? 'checked' : ''}>始终保存大模型完整输入输出（推荐；成功与失败均记录，图片二进制和密钥排除）</label><div class="co-api-actions"><button class="co-mini" id="co-refresh-logs" type="button">刷新摘要</button><button class="co-mini co-test" id="co-export-model-io" type="button">导出大模型输入输出</button><button class="co-mini" id="co-export-logs-all" type="button">导出全部日志</button><button class="co-mini" id="co-export-logs-last10" type="button">导出最近10条</button><button class="co-mini co-danger" id="co-clear-logs" type="button">清空日志</button></div><div class="co-callout">日志页面始终只显示最近200条轻量摘要，不展开大对象。“导出大模型输入输出”会跨越普通操作日志，导出全部演绎、分镜与绘画 API 请求/响应，不受最近10条限制；实际 system/user prompt 和模型文本响应会完整保留，鉴权字段与所有图片 base64 仍会清理为摘要。</div><div class="co-log-list" id="co-log-view"></div><label class="co-field" style="margin-top:12px"><span>最近一次已校验分镜 JSON</span><textarea id="co-last-story" readonly></textarea></label><label class="co-field" style="margin-top:12px"><span>最近一次分页图片摘要</span><textarea id="co-last-image" readonly></textarea></label><div id="co-image-preview"></div></div>
         </main>
       </section>
+      <dialog class="co-dialog co-full-setup-dialog" id="co-full-setup-dialog"><form method="dialog"><header><strong>完整模式 · 只需在酒馆主机安装一次</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">手机、平板和其他浏览器不需要重复安装。请选择 SillyTavern 后端实际运行的位置，而不是你现在拿来打开网页的设备。</div><nav class="co-dialog-tabs"><button class="active" data-setup-page="pc" type="button">PC 直接用</button><button data-setup-page="phone" type="button">手机直接用</button><button data-setup-page="remote" type="button">远程用</button></nav><section class="co-dialog-page active" data-setup-page="pc"><h3>酒馆运行在 Windows 电脑</h3><ol><li>打开漫画球扩展文件夹。</li><li>双击 <code>install-server-plugin.bat</code>。</li><li>安装器会自动备份配置；酒馆重启后回到这里点“重新检测”。</li></ol><div class="co-callout">常见位置：<code>SillyTavern/public/scripts/extensions/third-party/comic-orb</code></div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="pc" type="button">复制文件位置</button></div></section><section class="co-dialog-page" data-setup-page="phone"><h3>酒馆本身运行在 Android Termux</h3><p>在 Termux 粘贴下面的一行，它会自动寻找漫画球并执行安装：</p><pre id="co-phone-setup-command">p="$(find "$HOME" -type f -path '*/comic-orb/install-server-plugin.sh' -print -quit 2&gt;/dev/null)" &amp;&amp; [ -n "$p" ] &amp;&amp; sh "$p"</pre><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="phone" type="button">复制 Termux 命令</button></div></section><section class="co-dialog-page" data-setup-page="remote"><h3>手机访问的是电脑、NAS、VPS 或 Docker 酒馆</h3><p>手机无需安装任何东西。只需由酒馆主机管理员登录服务器，在漫画球目录运行安装脚本一次；之后所有手机和电脑用户都会自动使用完整模式。</p><pre id="co-remote-setup-command">sh /你的/SillyTavern/漫画球目录/install-server-plugin.sh /你的/SillyTavern</pre><div class="co-callout">Docker 用户需要在保存 SillyTavern 文件的主机或容器内执行；安装完成后重启该酒馆容器。</div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="remote" type="button">复制远程命令模板</button></div></section><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button></div></form></dialog>
       <dialog class="co-dialog co-regex-ai-dialog" id="co-regex-ai-dialog"><form method="dialog"><header><strong>AI 辅助制作剧情正则</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">下面的指导词和所选范围未经任何正则处理的完整楼层原文，将作为纯文本发送给当前分镜 API；不会发送参考图、MVU或现有正则处理结果。你可以在发送前补充需要删除或保留的内容。</div><label class="co-field"><span>正则制作指导词（可编辑）</span><textarea id="co-regex-ai-guide">${esc(settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE)}</textarea></label><label class="co-field"><span>将发送的未清洗楼层原文（只读）</span><textarea id="co-regex-ai-source" readonly></textarea></label><div class="co-status" id="co-regex-ai-status">尚未发送。</div><section id="co-regex-ai-result-wrap" hidden><label class="co-field"><span>AI 返回并通过校验的漫画球正则 JSON</span><textarea id="co-regex-ai-result" readonly></textarea></label><label class="co-field"><span>在本次原文上的清洗预览</span><textarea id="co-regex-ai-preview" readonly></textarea></label><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-append" type="button">追加到现有规则</button><button class="co-mini co-test" id="co-regex-ai-replace" type="button">覆盖现有规则</button></div></section><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-reset-guide" type="button">恢复默认指导词</button><button class="co-mini" value="cancel">关闭</button><button class="co-mini co-test" id="co-regex-ai-send" type="button">发送给分镜 API</button></div></form></dialog>
       <dialog class="co-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画页详情</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><nav class="co-dialog-tabs"><button class="active" data-dialog-page="redraw" type="button">重绘</button><button data-dialog-page="prompt" type="button">实际提示词</button></nav><section class="co-dialog-page active" data-dialog-page="redraw"><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><div class="co-callout">确认时会冻结当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></section><section class="co-dialog-page" data-dialog-page="prompt"><textarea id="co-actual-prompt" readonly></textarea><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button><button class="co-mini" id="co-copy-prompt" type="button">复制文本</button></div></section></form></dialog>
       <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
@@ -2963,7 +2986,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
         settings.interaction.runSubmitCooldown = checked('co-enable-run-cooldown');
@@ -3203,6 +3226,18 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function switchRedrawDialogPage(page) {
         root.querySelectorAll('#co-redraw-dialog [data-dialog-page]').forEach(element => element.classList.toggle('active', element.dataset.dialogPage === page));
     }
+    function switchFullSetupPage(page) {
+        root.querySelectorAll('#co-full-setup-dialog [data-setup-page]').forEach(element => element.classList.toggle('active', element.dataset.setupPage === page));
+    }
+    async function copyFullSetupInstruction(kind) {
+        const text = kind === 'phone'
+            ? `p="$(find "$HOME" -type f -path '*/comic-orb/install-server-plugin.sh' -print -quit 2>/dev/null)" && [ -n "$p" ] && sh "$p"`
+            : kind === 'remote'
+                ? 'sh /你的/SillyTavern/漫画球目录/install-server-plugin.sh /你的/SillyTavern'
+                : 'SillyTavern\\public\\scripts\\extensions\\third-party\\comic-orb\\install-server-plugin.bat';
+        await navigator.clipboard.writeText(text);
+        notify(kind === 'pc' ? '文件位置已复制' : '安装命令已复制', 'success');
+    }
     async function openRedrawDialog(cacheId, page = 'redraw') {
         const record = await imageCacheGet(cacheId);
         if (!record) { notify('该正文图片对应的本地缓存已被删除，无法重绘', 'error'); return; }
@@ -3223,6 +3258,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function redrawExecutionSnapshot() {
         const adaptationProfile = activeApiProfile('adaptation'); const storyboardProfile = activeApiProfile('storyboard'); const drawingProfile = activeApiProfile('drawing');
+        const backendMode = settings.backendMode === 'full' ? 'full' : 'basic';
         return {
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
@@ -3230,7 +3266,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            adaptationConf: clone(settings.adaptation), storyboardConf: clone(settings.storyboard), drawingConf: clone(settings.drawing), refs: snapshotRefs(),
+            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
@@ -3325,7 +3361,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         finally { button.disabled = false; }
     }
 
-    fillApiUi('adaptation'); fillApiUi('storyboard'); fillApiUi('drawing');
+    fillApiUi('adaptation'); fillApiUi('storyboard'); fillApiUi('drawing'); renderBackendModeControls();
     root.querySelector('#co-fab').addEventListener('click', e => { if (root.querySelector('#co-fab').dataset.dragged === '1') return; const panel = root.querySelector('#co-panel'); panel.classList.toggle('open'); if (panel.classList.contains('open')) void checkLocalProxyStatus(); });
     root.querySelector('#co-close').addEventListener('click', () => root.querySelector('#co-panel').classList.remove('open'));
     root.querySelector('#co-run').addEventListener('click', run);
@@ -3364,6 +3400,23 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#sb-test').addEventListener('click', () => testApi('storyboard'));
     root.querySelector('#dr-test').addEventListener('click', () => testApi('drawing'));
     root.querySelector('#co-proxy-recheck').addEventListener('click', () => checkLocalProxyStatus());
+    root.querySelector('#co-backend-mode').addEventListener('change', () => {
+        syncSettingsFromUi();
+        renderBackendModeControls();
+        void checkLocalProxyStatus().then(ready => {
+            if (settings.backendMode === 'full' && !ready) {
+                switchFullSetupPage(matchMedia('(max-width: 650px)').matches ? 'phone' : 'pc');
+                if (!root.querySelector('#co-full-setup-dialog').open) root.querySelector('#co-full-setup-dialog').showModal();
+            }
+        });
+        notify(settings.backendMode === 'full' ? '已切换完整模式；新提交任务将使用酒馆后端中继' : '已切换基础模式；新提交任务将由浏览器直接请求 API', 'success');
+    });
+    root.querySelector('#co-full-setup').addEventListener('click', () => {
+        switchFullSetupPage(matchMedia('(max-width: 650px)').matches ? 'phone' : 'pc');
+        root.querySelector('#co-full-setup-dialog').showModal();
+    });
+    root.querySelectorAll('#co-full-setup-dialog .co-dialog-tabs button').forEach(button => button.addEventListener('click', () => switchFullSetupPage(button.dataset.setupPage)));
+    root.querySelectorAll('#co-full-setup-dialog .co-copy-setup').forEach(button => button.addEventListener('click', () => copyFullSetupInstruction(button.dataset.copyKind).catch(error => notify(`复制失败：${error.message}`, 'error'))));
     root.querySelector('#dr-local-proxy').addEventListener('change', () => { syncSettingsFromUi(); void checkLocalProxyStatus(); });
     root.querySelector('#dr-speed-preset').addEventListener('click', () => {
         root.querySelector('#dr-quality').value = 'low'; root.querySelector('#dr-output-format').value = 'jpeg';
