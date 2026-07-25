@@ -21,6 +21,22 @@
         { enabled: true, pattern: '<(dm_think|CheckResult|safe|UpdateVariable)\\b[^>]*>[\\s\\S]*?<\\/\\s*\\1\\s*>', flags: 'gi', replacement: '' },
         { enabled: true, pattern: TAG_STRIP_PATTERN, flags: 'gu', replacement: '' }
     ];
+    const DEFAULT_REGEX_ASSISTANT_GUIDE = `你是 SillyTavern 漫画剧情正文清洗规则设计师。阅读用户提供的“未经任何正则处理的楼层原文”，为漫画球生成一套强力但不破坏剧情的 JavaScript 正则列表。
+
+目标：尽可能删除所有不属于小说正文、角色台词、动作、心理、环境、剧情因果的内容，只把能帮助漫画演绎与分镜的叙事信息留下。
+
+默认处理原则：
+1. 删除 thinking、think、reasoning、analysis、metacognition、dm_think、CheckResult、safe、UpdateVariable、robust 等模型思考、检查、变量更新或控制块；标签不完整、闭合不标准时也要结合样本设计稳健规则。
+2. 删除系统提示、生成过程说明、免责声明、调试信息、状态面板、变量转储、JSON/XML 控制数据、工具调用、隐藏指令、OOC 管理信息等非正文内容。
+3. 对纯包装标签：只删除标签本身并保留标签内正文；对明确承载非正文的容器：连标签和内容一起删除。
+4. 保留角色对白、叙事、动作、环境、内心活动以及能帮助分镜理解人物动机的信息。类似 <角色名_行为逻辑>、<角色名_心里话> 的标签和内容默认保留，不得被通用标签规则误删。
+5. 保留漫画球添加的 [楼层 N]、说话者名称和正文结构。不要写针对某个角色名、某句剧情或某个楼层号的一次性规则。
+6. 规则按执行顺序排列；先删除整块非正文，再清理残余标签或噪声。避免灾难性回溯、无限范围误删和依赖后行断言；使用浏览器 JavaScript 支持的语法。
+7. flags 只能使用 JavaScript RegExp 合法标志；replacement 通常为空字符串。每条 pattern 不包含正则两侧的 / /。
+8. 静默检查每条表达式能被 new RegExp(pattern, flags) 构造，并用所给样本推演清洗结果；宁可保留不确定的正文，也不要吞掉连续剧情。
+
+只输出一个 JSON 对象，不要 Markdown、代码围栏、解释或注释。严格结构：
+{"format":"comic-orb-regex-list","version":1,"rules":[{"enabled":true,"pattern":"JavaScript 正则字符串","flags":"gim","replacement":""}]}`;
     const LEGACY_STORYBOARD_SYSTEM_PROMPT = '你是专业漫画分镜师。把剧情改写成一张漫画页的精确绘画提示词。明确画幅、分格、镜头、人物外观与位置、动作表情、场景、光影、对白框文字，并保持角色一致性。只输出可直接交给绘画模型的最终提示词，不要解释。';
     const LEGACY_STORYBOARD_TEST_PROMPT = '测试剧情：雨夜的车站里，少女发现远处站台有一个熟悉的人影。请把这段剧情整理成简洁、可直接用于绘画的漫画分镜提示词，并明确镜头、构图、人物动作和表情。';
     const DEFAULT_STORYBOARD_SYSTEM_PROMPT = `你是专业漫画分镜主笔。先精炼剧情并整理必要的静态视觉连续性，但不得续写输入范围之外的剧情事件，再输出可被程序解析并按页并发绘制的严格 JSON。只输出一个 JSON 对象，禁止 Markdown、代码块、解释、注释或 JSON 外文字。
@@ -308,7 +324,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const style = document.createElement('link');
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
-        style.href = new URL('./style.css?v=20260725-reader-versions-insert-toggle-1', import.meta.url).href;
+        style.href = new URL('./style.css?v=20260725-ai-regex-user-floors-1', import.meta.url).href;
         document.head.appendChild(style);
     }
 
@@ -320,10 +336,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         interpretivePageRange: { min: 2, max: 8 },
         storyboardWorkerPages: '1-3',
         includeNames: true,
+        excludeUserFloors: true,
         includeMvuData: false,
         preflightNeutralize: false,
         regexRules: '',
         regexList: [],
+        regexAssistantGuide: DEFAULT_REGEX_ASSISTANT_GUIDE,
         storyboard: {
             baseUrl: 'https://api.openai.com', path: '/v1/chat/completions', apiKey: '', model: 'gpt-4.1-mini', temperature: 0.4,
             modelsPath: '/v1/models',
@@ -460,6 +478,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let cacheReaderChatId = '';
     let cacheReaderRenderToken = 0;
     let imageCacheQueue = Promise.resolve();
+    let pendingAiRegexRules = [];
 
     function safeJson(text, fallback = {}) { try { return text ? JSON.parse(text) : fallback; } catch { return fallback; } }
     function newId() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -1099,12 +1118,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         for (let i = start; i <= end; i++) {
             const msg = ctx.chat[i];
             if (!msg) continue;
-            if (msg.is_user === true) { skippedUserFloors.push(i); continue; }
+            if (msg.is_user === true && options.excludeUserFloors !== false) { skippedUserFloors.push(i); continue; }
             const name = msg.name || (msg.is_user ? ctx.name1 : ctx.name2) || (msg.is_user ? 'User' : 'Character');
             chunks.push(options.includeNames ? `[楼层 ${i}] ${name}:\n${msg.mes ?? ''}` : `[楼层 ${i}]\n${msg.mes ?? ''}`);
             floors.push(i);
         }
         return { text: applyRegexRules(chunks.join('\n\n'), options.regexList), floors, skippedUserFloors };
+    }
+    function targetFloorForSelection(ctx, floors) {
+        return [...floors].reverse().find(floor => ctx.chat?.[floor]?.is_user !== true) ?? floors.at(-1);
     }
 
     function optionalGlobal(name) {
@@ -1592,6 +1614,26 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '分镜 API 测试' : '分镜生成', value => validateTextApiPayload(value, '分镜 API ', body));
         const text = extractApiResponseText(data);
         return options.withTiming ? { text, timing: data?.__comicOrbTiming ? { ...data.__comicOrbTiming } : null, ageMetadataConflict } : text;
+    }
+    async function callRegexAssistant(sourceText, guide, options = {}) {
+        const conf = options.conf || settings.storyboard;
+        const extras = apiExtras(conf);
+        delete extras.messages;
+        if (extras.response_format?.type === 'json_schema') extras.response_format = { type: 'json_object' };
+        const body = {
+            model: conf.model,
+            temperature: Number(conf.temperature),
+            ...textReasoningBody(conf, extras),
+            ...textOutputTokenBody(conf, extras),
+            ...extras,
+            messages: [
+                { role: 'system', content: String(guide || DEFAULT_REGEX_ASSISTANT_GUIDE) },
+                { role: 'user', content: `以下是用户当前选择的、未经任何正则处理的完整楼层原文。请只为这些内容设计可泛化的漫画球正则 JSON，不要改写或续写剧情：\n\n${String(sourceText || '')}` },
+            ],
+        };
+        const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
+        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 正则助手 · 分镜 API', value => validateTextApiPayload(value, 'AI 正则助手 ', body));
+        return extractApiResponseText(data);
     }
     async function callAdaptation(plot, options = {}) {
         const conf = options.conf || settings.adaptation;
@@ -2340,7 +2382,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function productionExecutionSnapshot() {
         const adaptationProfile = activeApiProfile('adaptation'); const storyboardProfile = activeApiProfile('storyboard'); const drawingProfile = activeApiProfile('drawing');
         return {
-            range: String(settings.range), includeNames: Boolean(settings.includeNames), includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
+            range: String(settings.range), includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
@@ -2370,7 +2412,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
         try {
             ensureNotCanceled(signal); updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 准备工作流`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
-            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
+            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
             let plan = checkpoint.plan; let storyboardTiming = checkpoint.storyboardTiming;
             if (!plan && execution.workflowMode === 'interpretive') {
                 updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 演绎 AI`, `完整剧情演绎 · 总页数 ${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}`);
@@ -2441,11 +2483,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const ctx = context(); const execution = productionExecutionSnapshot();
             if (execution.workflowMode === 'interpretive') assertInterpretivePageAllocation(execution.interpretivePageRange, execution.storyboardWorkerPageRange);
             const { start, end } = parseRange(execution.range, ctx.chat.length); let selection = collectPlot(ctx, start, end, execution);
-            if (!selection.floors.length) throw new Error('所选范围内没有非 User 的剧情楼');
+            if (!selection.floors.length) throw new Error(execution.excludeUserFloors ? '所选范围内没有非 User 的剧情楼' : '所选范围内没有可发送的对话楼层');
             if (!selection.text.trim()) throw new Error('剔除 User 楼并执行正则后的剧情为空');
             selection = await appendMvuAfterRegex(selection, ctx, execution);
             await requireLocalProxyReady(execution.drawingConf);
-            const id = newId(); const job = Object.freeze({ id, shortId: id.slice(0, 8), chatId: currentChatId(ctx), targetFloor: selection.floors.at(-1), start, end, selection: clone(selection), execution });
+            const id = newId(); const job = Object.freeze({ id, shortId: id.slice(0, 8), chatId: currentChatId(ctx), targetFloor: targetFloorForSelection(ctx, selection.floors), start, end, selection: clone(selection), execution });
             void runProductionJob(job);
             setStatus(`任务 #${job.shortId} 已进入后台。${settings.interaction.runSubmitCooldown !== false ? '5 秒后' : '现在'}可继续提交其他任务。`, 'ok'); notify(`漫画任务 #${job.shortId} 已加入后台`, 'success');
         } catch (error) {
@@ -2514,7 +2556,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>漫画对白与可见文字语言</span><input id="co-output-language" list="co-output-language-options" value="${esc(String(settings.outputLanguage || 'zh-CN'))}" placeholder="例如 zh-CN、auto、ja-JP、en-US"><datalist id="co-output-language-options"><option value="zh-CN">简体中文（默认）</option><option value="auto">跟随浏览器语言</option><option value="zh-TW">繁體中文</option><option value="zh-HK">繁體中文（香港）</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">français</option><option value="de-DE">Deutsch</option><option value="es-ES">español</option></datalist></label>
             <label class="co-field"><span>图片替代文字</span><input id="co-alt" value="${esc(settings.insert.alt)}"></label>
             <label class="co-check co-full"><input id="co-names" type="checkbox" ${settings.includeNames ? 'checked' : ''}>发送剧情时保留角色名和楼层号</label>
-            <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
+            <label class="co-check co-full"><input id="co-exclude-user-floors" type="checkbox" ${settings.excludeUserFloors !== false ? 'checked' : ''}>不发送 User 类型楼层（默认开启；关闭后 User 楼也加入剧情正文）</label>
+            <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini co-test" id="co-ai-regex" type="button">AI 辅助制作正则</button><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
             <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-20页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画页按设置的启动间隔依次发起，设为0可同时发起。范围包含首尾且自动剔除User楼；每次提交都会冻结模式、页数、语言、剧情、正则、API、参考图、绘画间隔和写回目标。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
           </div><button class="co-run" id="co-run">生成并发分页漫画并插入末层</button><div class="co-status" id="co-status">等待开始。直接模式需配置分镜与绘画 API；演绎模式还需配置独立演绎 API。</div></div>
           <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并保留成功检查点；“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的Cancel会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
@@ -2593,6 +2636,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="debug"><label class="co-check co-debug-toggle"><input id="co-debug-enabled" type="checkbox" ${settings.debug.enabled ? 'checked' : ''}>DEBUG 结构化日志（记录所有操作的完整文本与参数）</label><label class="co-check co-debug-toggle"><input id="co-capture-model-io" type="checkbox" ${settings.debug.captureModelIo !== false ? 'checked' : ''}>始终保存大模型完整输入输出（推荐；成功与失败均记录，图片二进制和密钥排除）</label><div class="co-api-actions"><button class="co-mini" id="co-refresh-logs" type="button">刷新摘要</button><button class="co-mini co-test" id="co-export-model-io" type="button">导出大模型输入输出</button><button class="co-mini" id="co-export-logs-all" type="button">导出全部日志</button><button class="co-mini" id="co-export-logs-last10" type="button">导出最近10条</button><button class="co-mini co-danger" id="co-clear-logs" type="button">清空日志</button></div><div class="co-callout">日志页面始终只显示最近200条轻量摘要，不展开大对象。“导出大模型输入输出”会跨越普通操作日志，导出全部演绎、分镜与绘画 API 请求/响应，不受最近10条限制；实际 system/user prompt 和模型文本响应会完整保留，鉴权字段与所有图片 base64 仍会清理为摘要。</div><div class="co-log-list" id="co-log-view"></div><label class="co-field" style="margin-top:12px"><span>最近一次已校验分镜 JSON</span><textarea id="co-last-story" readonly></textarea></label><label class="co-field" style="margin-top:12px"><span>最近一次分页图片摘要</span><textarea id="co-last-image" readonly></textarea></label><div id="co-image-preview"></div></div>
         </main>
       </section>
+      <dialog class="co-dialog co-regex-ai-dialog" id="co-regex-ai-dialog"><form method="dialog"><header><strong>AI 辅助制作剧情正则</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">下面的指导词和所选范围未经任何正则处理的完整楼层原文，将作为纯文本发送给当前分镜 API；不会发送参考图、MVU或现有正则处理结果。你可以在发送前补充需要删除或保留的内容。</div><label class="co-field"><span>正则制作指导词（可编辑）</span><textarea id="co-regex-ai-guide">${esc(settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE)}</textarea></label><label class="co-field"><span>将发送的未清洗楼层原文（只读）</span><textarea id="co-regex-ai-source" readonly></textarea></label><div class="co-status" id="co-regex-ai-status">尚未发送。</div><section id="co-regex-ai-result-wrap" hidden><label class="co-field"><span>AI 返回并通过校验的漫画球正则 JSON</span><textarea id="co-regex-ai-result" readonly></textarea></label><label class="co-field"><span>在本次原文上的清洗预览</span><textarea id="co-regex-ai-preview" readonly></textarea></label><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-append" type="button">追加到现有规则</button><button class="co-mini co-test" id="co-regex-ai-replace" type="button">覆盖现有规则</button></div></section><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-reset-guide" type="button">恢复默认指导词</button><button class="co-mini" value="cancel">关闭</button><button class="co-mini co-test" id="co-regex-ai-send" type="button">发送给分镜 API</button></div></form></dialog>
       <dialog class="co-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画页详情</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><nav class="co-dialog-tabs"><button class="active" data-dialog-page="redraw" type="button">重绘</button><button data-dialog-page="prompt" type="button">实际提示词</button></nav><section class="co-dialog-page active" data-dialog-page="redraw"><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><div class="co-callout">确认时会冻结当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></section><section class="co-dialog-page" data-dialog-page="prompt"><textarea id="co-actual-prompt" readonly></textarea><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button><button class="co-mini" id="co-copy-prompt" type="button">复制文本</button></div></section></form></dialog>
       <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
     document.body.appendChild(root);
@@ -2788,6 +2832,90 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             return item;
         });
     }
+    function rawPlotForRegexAssistant() {
+        syncSettingsFromUi();
+        const ctx = context();
+        const { start, end } = parseRange(settings.range, ctx.chat.length);
+        const selection = collectPlot(ctx, start, end, {
+            includeNames: Boolean(settings.includeNames),
+            excludeUserFloors: settings.excludeUserFloors !== false,
+            regexList: [],
+        });
+        if (!selection.floors.length) throw new Error(settings.excludeUserFloors !== false ? '所选范围内没有可交给 AI 分析的非 User 楼层' : '所选范围内没有可交给 AI 分析的对话楼层');
+        return { ...selection, start, end };
+    }
+    function openRegexAssistantDialog() {
+        try {
+            const selection = rawPlotForRegexAssistant();
+            pendingAiRegexRules = [];
+            root.querySelector('#co-regex-ai-guide').value = settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE;
+            root.querySelector('#co-regex-ai-source').value = selection.text;
+            root.querySelector('#co-regex-ai-result').value = '';
+            root.querySelector('#co-regex-ai-preview').value = '';
+            root.querySelector('#co-regex-ai-result-wrap').hidden = true;
+            root.querySelector('#co-regex-ai-status').textContent = `已准备楼层 ${selection.start}-${selection.end}：发送 ${selection.floors.length} 层，剔除 ${selection.skippedUserFloors.length} 个 User 楼；尚未调用 API。`;
+            const dialog = root.querySelector('#co-regex-ai-dialog');
+            if (!dialog.open) dialog.showModal();
+        } catch (error) {
+            setStatus(`AI 正则助手无法打开：${error.message}`, 'error');
+            notify(error.message, 'error');
+        }
+    }
+    async function runRegexAssistant() {
+        const button = root.querySelector('#co-regex-ai-send');
+        const status = root.querySelector('#co-regex-ai-status');
+        try {
+            const guide = val('co-regex-ai-guide').trim();
+            const source = val('co-regex-ai-source');
+            if (!guide) throw new Error('正则制作指导词不能为空');
+            if (!source.trim()) throw new Error('未清洗楼层原文为空');
+            settings.regexAssistantGuide = guide;
+            save();
+            button.disabled = true;
+            button.textContent = '正在请求分镜 API…';
+            status.textContent = '分镜 API 正在分析非正文结构并制作正则；完整输入输出会按当前日志设置记录。';
+            const raw = await callRegexAssistant(source, guide, { conf: clone(settings.storyboard) });
+            const parsed = parseModelJson(raw, 'AI 正则助手');
+            const rules = validateRegexList(parsed);
+            if (!rules.length) throw new Error('AI 返回的 rules 数组为空');
+            const preview = applyRegexRules(source, rules);
+            pendingAiRegexRules = rules;
+            root.querySelector('#co-regex-ai-result').value = JSON.stringify({ format: 'comic-orb-regex-list', version: 1, rules }, null, 2);
+            root.querySelector('#co-regex-ai-preview').value = preview;
+            root.querySelector('#co-regex-ai-result-wrap').hidden = false;
+            status.textContent = `校验通过：${rules.length} 条规则；样本文本由 ${source.length} 字符清洗为 ${preview.length} 字符。请检查预览后选择追加或覆盖。`;
+            await writeLog('result', 'AI 正则助手结果校验通过', { rules, sourceCharacters: source.length, previewCharacters: preview.length, result: `${rules.length} 条规则` });
+        } catch (error) {
+            pendingAiRegexRules = [];
+            root.querySelector('#co-regex-ai-result-wrap').hidden = true;
+            status.textContent = `制作失败：${error.message}`;
+            await writeLog('error', 'AI 正则助手失败', { result: error.message });
+            notify(`AI 正则制作失败：${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = '发送给分镜 API';
+        }
+    }
+    function applyAiRegexRules(mode) {
+        if (!pendingAiRegexRules.length) { notify('没有可应用的 AI 正则结果', 'error'); return; }
+        syncRegexFromUi();
+        if (mode === 'replace') {
+            if (settings.regexList.length && !confirm(`确定用 AI 生成的 ${pendingAiRegexRules.length} 条规则覆盖当前 ${settings.regexList.length} 条规则？`)) return;
+            settings.regexList = clone(pendingAiRegexRules);
+        } else {
+            const existing = new Set(settings.regexList.map(rule => `${rule.pattern}\u0000${rule.flags}\u0000${rule.replacement}`));
+            const additions = pendingAiRegexRules.filter(rule => !existing.has(`${rule.pattern}\u0000${rule.flags}\u0000${rule.replacement}`)).map(clone);
+            settings.regexList.push(...additions);
+            if (!additions.length) { notify('AI 规则与现有规则完全重复，没有追加', 'info'); return; }
+        }
+        save();
+        renderRegexList();
+        const preview = root.querySelector('#co-regex-preview');
+        preview.value = val('co-regex-ai-preview');
+        root.querySelector('#co-regex-preview-wrap').classList.add('open');
+        root.querySelector('#co-regex-ai-dialog').close();
+        notify(`已${mode === 'replace' ? '覆盖' : '追加'} AI 正则规则`, 'success');
+    }
     function addTagCleanupPreset() {
         syncRegexFromUi(); settings.regexList = settings.regexList.filter(rule => !rule.pattern.includes('(dm_think|thinking|CheckResult|safe|UpdateVariable)') && !(rule.pattern.startsWith('<thinking\\b[^>]*>') || rule.pattern.includes('\\[metacognition\\]')) && !rule.pattern.startsWith('<\\/?[A-Za-z_]') && !rule.pattern.startsWith('<\\/?[\\p{L}_]'));
         const existing = new Set(settings.regexList.map(rule => `${rule.pattern}\u0000${rule.flags}`));
@@ -2813,7 +2941,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
         settings.interaction.runSubmitCooldown = checked('co-enable-run-cooldown');
@@ -2860,14 +2988,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     async function testRegex() {
         try {
-            syncSettingsFromUi(); const ctx = context(); const execution = { includeNames: Boolean(settings.includeNames), includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList), workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct' }; const { start, end } = parseRange(settings.range, ctx.chat.length); let selection = collectPlot(ctx, start, end, execution);
-            if (!selection.floors.length) throw new Error('所选范围内没有非 User 的剧情楼');
+            syncSettingsFromUi(); const ctx = context(); const execution = { includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList), workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct' }; const { start, end } = parseRange(settings.range, ctx.chat.length); let selection = collectPlot(ctx, start, end, execution);
+            if (!selection.floors.length) throw new Error(execution.excludeUserFloors ? '所选范围内没有非 User 的剧情楼' : '所选范围内没有可测试的对话楼层');
             selection = await appendMvuAfterRegex(selection, ctx, execution);
             const transportPreview = execution.preflightNeutralize ? neutralizeNarrativeWordingForTransport(selection.text) : { text: selection.text, count: 0 };
             const wrap = root.querySelector('#co-regex-preview-wrap'); const preview = root.querySelector('#co-regex-preview'); preview.value = transportPreview.text; wrap.classList.add('open'); preview.scrollTop = 0;
             const mvuSummary = selection.mvuMeta?.enabled ? `；MVU：${selection.mvuMeta.mode === 'baseline-plus-json-patch' ? `完整基线 + ${selection.mvuMeta.changedFloors} 个变化楼` : '历史不可用，末楼当前快照'}` : '；MVU：未启用';
             const preflightSummary = execution.preflightNeutralize ? `；前置清洗：${transportPreview.count} 处` : '；前置清洗：关闭';
-            setStatus(`正则测试完成：显示 ${selection.floors.length} 个剧情楼，已剔除 ${selection.skippedUserFloors.length} 个 User 楼${mvuSummary}${preflightSummary}，未发送 API。`, 'ok');
+            setStatus(`正则测试完成：显示 ${selection.floors.length} 个对话楼，${execution.excludeUserFloors ? `已剔除 ${selection.skippedUserFloors.length} 个 User 楼` : '已包含 User 楼'}${mvuSummary}${preflightSummary}，未发送 API。`, 'ok');
         } catch (error) { setStatus(`正则测试失败：${error.message}`, 'error'); notify(error.message, 'error'); }
     }
     async function refreshLogs() {
@@ -3188,6 +3316,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-ref-preset-save').addEventListener('click', () => saveReferencePreset().catch(error => notify(error.message, 'error')));
     root.querySelector('#co-ref-preset-delete').addEventListener('click', () => deleteReferencePreset().catch(error => notify(error.message, 'error')));
     root.querySelector('#co-tag-preset').addEventListener('click', addTagCleanupPreset);
+    root.querySelector('#co-ai-regex').addEventListener('click', openRegexAssistantDialog);
+    root.querySelector('#co-regex-ai-send').addEventListener('click', runRegexAssistant);
+    root.querySelector('#co-regex-ai-reset-guide').addEventListener('click', () => { root.querySelector('#co-regex-ai-guide').value = DEFAULT_REGEX_ASSISTANT_GUIDE; settings.regexAssistantGuide = DEFAULT_REGEX_ASSISTANT_GUIDE; save(); });
+    root.querySelector('#co-regex-ai-append').addEventListener('click', () => applyAiRegexRules('append'));
+    root.querySelector('#co-regex-ai-replace').addEventListener('click', () => applyAiRegexRules('replace'));
     root.querySelector('#co-import-regex').addEventListener('click', () => root.querySelector('#co-import-regex-file').click());
     root.querySelector('#co-import-regex-file').addEventListener('change', event => importRegexList(event.target.files?.[0]));
     root.querySelector('#co-export-regex').addEventListener('click', exportRegexList);
