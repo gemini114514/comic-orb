@@ -11,6 +11,7 @@
     const SERVER_PLUGIN_API = '/api/plugins/comic-orb';
     const STORE_KEY = 'comic-orb.settings.v1';
     const DB_NAME = 'comic-orb-assets';
+    const COMIC_MEDIA_TITLE_PREFIX = 'comic-orb:image;';
     const THINKING_NAMES = 'thinking|think|reasoning|analysis';
     const THINKING_BOUNDARY = '(?=^[ \\t]*<(?:dm_think|content|CheckResult|safe|UpdateVariable)\\b)|(?=^\\[楼层 \\d+\\])|(?![\\s\\S])';
     const THINKING_BRACKET_END = `(?:^[ \\t]*<\\/\\s*(?:${THINKING_NAMES})\\s*>?[ \\t]*$|\\[\\/(?:metacognition|thinking|reasoning|analysis)\\]|${THINKING_BOUNDARY})`;
@@ -2347,15 +2348,69 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         try { ctx.updateMessageBlock(floor, msg); return true; }
         catch (error) { console.warn('[漫画工房] 正文已保存，但即时消息块刷新失败', error); queueLog('error', '正文已保存但即时 DOM 刷新失败', { floor, result: error.message }); return false; }
     }
+    function comicMediaAttachment(item, index = 0, insertConf = settings.insert) {
+        const page = Number(item.page || index + 1);
+        const cacheId = String(item.cacheId || 'legacy');
+        const cleanUrl = String(item.url || '').replace(/#comic-orb-cache=[^\s)]+$/, '');
+        return {
+            type: 'image',
+            source: 'generated',
+            url: cleanUrl,
+            title: `${COMIC_MEDIA_TITLE_PREFIX}cache=${cacheId};page=${page}`,
+            alt: `${insertConf.alt || 'AI 漫画'} · 第 ${page} 页`,
+        };
+    }
+    function comicMediaInfo(attachment) {
+        const match = String(attachment?.title || '').match(/^comic-orb:image;cache=([^;]+);page=(\d+)$/);
+        return match ? { cacheId: match[1], page: Number(match[2]) } : null;
+    }
+    function removeLegacyComicMarkdown(value, insertConf = settings.insert) {
+        const current = String(value || '');
+        const marker = String(insertConf.marker || '<!-- comic-orb -->');
+        const start = '<!-- comic-orb-pages:start -->';
+        const end = '<!-- comic-orb-pages:end -->';
+        const multi = new RegExp(`(?:\\r?\\n){0,2}${escapeRegExp(marker)}\\s*\\r?\\n?${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}`, 'g');
+        const single = new RegExp(`(?:\\r?\\n){0,2}${escapeRegExp(marker)}\\s*\\r?\\n?!\\[[^\\]]*\\]\\([^\\n]+\\)`, 'g');
+        const next = current.replace(multi, '').replace(single, '');
+        return next === current ? current : next.trimEnd();
+    }
+    function legacyComicItems(value) {
+        const items = [];
+        const pattern = /<!--\s*comic-orb:image\s+id=["']([^"']+)["']\s+page=["']?(\d+)["']?\s*-->\s*\r?\n?!\[[^\]]*\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+        for (const match of String(value || '').matchAll(pattern)) {
+            items.push({
+                cacheId: match[1],
+                page: Number(match[2]),
+                url: match[3].replace(/#comic-orb-cache=[^\s)]+$/, ''),
+            });
+        }
+        return items;
+    }
+    function writeComicMedia(msg, items, insertConf = settings.insert) {
+        if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
+        const retained = Array.isArray(msg.extra.media) ? msg.extra.media.filter(attachment => !comicMediaInfo(attachment)) : [];
+        const attachments = items.map((item, index) => comicMediaAttachment(item, index, insertConf));
+        msg.extra.media = [...retained, ...attachments];
+        msg.extra.media_display = 'list';
+        msg.extra.inline_image = true;
+        msg.extra.comic_orb = {
+            version: 1,
+            marker: String(insertConf.marker || '<!-- comic-orb -->'),
+            pages: attachments.map(attachment => {
+                const info = comicMediaInfo(attachment);
+                return { cacheId: info.cacheId, page: info.page, url: attachment.url };
+            }),
+        };
+        // v1.25.1 and earlier appended Markdown to mes. Remove only our own tagged
+        // block while leaving the user's original Markdown/code/HTML byte-for-byte.
+        msg.mes = removeLegacyComicMarkdown(msg.mes, insertConf);
+    }
     async function insertIntoFloor(ctx, floor, imageUrl) {
-        const marker = settings.insert.marker;
-        const markdown = `${marker}\n![${settings.insert.alt || 'AI 漫画'}](${imageUrl})`;
-        const existing = new RegExp(`${escapeRegExp(marker)}\\s*\\n?!\\[[^\]]*\]\\([^\\n]+\\)`, 'g');
         const expectedChatId = currentChatId(ctx);
         return withChatWriteLock(expectedChatId, `向第 ${floor} 层插入漫画`, async freshCtx => {
             const msg = freshCtx.chat[floor];
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
-            msg.mes = existing.test(msg.mes || '') ? String(msg.mes).replace(existing, markdown) : `${String(msg.mes || '').trimEnd()}\n\n${markdown}`;
+            writeComicMedia(msg, [{ url: imageUrl, cacheId: 'legacy', page: 1 }], settings.insert);
             await freshCtx.saveChat();
             refreshMessageIfRendered(freshCtx, floor, msg);
         });
@@ -2367,22 +2422,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     async function insertPagesIntoFloor(ctx, floor, imageItems, insertConf = settings.insert) {
         const items = (Array.isArray(imageItems) ? imageItems : [imageItems]).map((item, index) => typeof item === 'string' ? { url: item, page: index + 1, cacheId: 'legacy' } : item);
-        const marker = insertConf.marker; const start = '<!-- comic-orb-pages:start -->'; const end = '<!-- comic-orb-pages:end -->';
-        const pages = items.map((item, index) => taggedPageMarkdown(item, index, insertConf)).join('\n\n');
-        const markdown = `${marker}\n${start}\n${pages}\n${end}`;
-        const multiExisting = new RegExp(`${escapeRegExp(marker)}\\s*\\n?${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}`, 'g');
-        const legacyExisting = new RegExp(`${escapeRegExp(marker)}\\s*\\n?!\\[[^\]]*\\]\\([^\\n]+\\)`, 'g');
         const expectedChatId = currentChatId(ctx);
         return withChatWriteLock(expectedChatId, `向第 ${floor} 层写回 ${items.length} 页漫画`, async freshCtx => {
             const msg = freshCtx.chat[floor];
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
-            const current = String(msg.mes || '');
-            msg.mes = multiExisting.test(current) ? current.replace(multiExisting, markdown)
-                : legacyExisting.test(current) ? current.replace(legacyExisting, markdown)
-                    : `${current.trimEnd()}\n\n${markdown}`;
+            writeComicMedia(msg, items, insertConf);
             await freshCtx.saveChat();
-            const savedText = String(freshCtx.chat[floor]?.mes || '');
-            const missingCacheId = items.find(item => item.cacheId && !savedText.includes(`id="${String(item.cacheId)}"`));
+            const savedMedia = Array.isArray(freshCtx.chat[floor]?.extra?.media) ? freshCtx.chat[floor].extra.media : [];
+            const savedIds = new Set(savedMedia.map(comicMediaInfo).filter(Boolean).map(info => info.cacheId));
+            const missingCacheId = items.find(item => item.cacheId && !savedIds.has(String(item.cacheId)));
             if (missingCacheId) throw new Error(`第 ${floor} 层保存后校验失败：缺少漫画缓存标识 ${missingCacheId.cacheId}`);
             refreshMessageIfRendered(freshCtx, floor, msg);
         });
@@ -2394,9 +2442,27 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return withChatWriteLock(expectedChatId, `替换第 ${floor} 层漫画页`, async freshCtx => {
             const msg = freshCtx.chat[floor];
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
+            if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
+            if (Array.isArray(msg.extra.media)) {
+                const mediaIndex = msg.extra.media.findIndex(attachment => comicMediaInfo(attachment)?.cacheId === String(oldCacheId));
+                if (mediaIndex >= 0) {
+                    msg.extra.media[mediaIndex] = comicMediaAttachment(item, Number(item.page || 1) - 1, insertConf);
+                    if (Array.isArray(msg.extra.comic_orb?.pages)) {
+                        const pageIndex = msg.extra.comic_orb.pages.findIndex(page => String(page.cacheId) === String(oldCacheId));
+                        if (pageIndex >= 0) msg.extra.comic_orb.pages[pageIndex] = { cacheId: String(item.cacheId), page: Number(item.page || 1), url: String(item.url || '').replace(/#comic-orb-cache=[^\s)]+$/, '') };
+                    }
+                    await freshCtx.saveChat();
+                    refreshMessageIfRendered(freshCtx, floor, msg);
+                    return;
+                }
+            }
             const current = String(msg.mes || '');
             if (!pattern.test(current)) throw new Error('正文中找不到该漫画页的 comic-orb:image 标签，可能已被手动修改');
-            msg.mes = current.replace(pattern, taggedPageMarkdown(item, Number(item.page || 1) - 1, insertConf));
+            const legacyItems = legacyComicItems(current).map(page => page.cacheId === String(oldCacheId)
+                ? { url: item.url, cacheId: item.cacheId, page: item.page }
+                : page);
+            if (!legacyItems.length) throw new Error('正文中的旧版漫画标签无法迁移，请从缓存页使用“重新上传写回”');
+            writeComicMedia(msg, legacyItems, insertConf);
             await freshCtx.saveChat();
             refreshMessageIfRendered(freshCtx, floor, msg);
         });
@@ -2410,7 +2476,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             freshCtx.chat.forEach((msg, floor) => {
                 const current = String(msg?.mes || '');
                 const next = current.replace(/!\[([^\]]*)\]\((\S+)\s+["']comic-orb:image;cache=([^;"']+);page=(\d+)["']\)/g, (_, alt, url, cacheId, page) => `![${alt}](${url}#comic-orb-cache=${encodeURIComponent(cacheId)}&page=${page})`);
-                if (next === current) return; msg.mes = next; changedFloors.push(floor); changed++;
+                const legacyItems = legacyComicItems(next);
+                if (legacyItems.length) {
+                    msg.mes = next;
+                    writeComicMedia(msg, legacyItems, settings.insert);
+                } else if (next !== current) {
+                    msg.mes = next;
+                } else {
+                    return;
+                }
+                changedFloors.push(floor); changed++;
             });
             if (changed) {
                 await freshCtx.saveChat();
@@ -2418,7 +2493,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             }
             return { changed };
         });
-        if (migration.changed) { await writeLog('operation', '迁移旧版正文漫画标识', { result: `已修正 ${migration.changed} 个楼层的 Markdown 图片语法` }); notify(`已自动修正 ${migration.changed} 个楼层的漫画图片显示`, 'success'); }
+        if (migration.changed) { await writeLog('operation', '迁移旧版正文漫画标识', { result: `已迁移 ${migration.changed} 个楼层到酒馆原生媒体附件` }); notify(`已将 ${migration.changed} 个楼层的旧漫画迁移为兼容媒体附件`, 'success'); }
     }
 
     function productionExecutionSnapshot() {
@@ -2541,7 +2616,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const source = String(msg?.mes || '');
         const marker = String(settings.insert?.marker || '').trim();
         return Boolean(
-            (marker && source.includes(marker))
+            Array.isArray(msg?.extra?.media) && msg.extra.media.some(attachment => comicMediaInfo(attachment))
+            || Array.isArray(msg?.extra?.comic_orb?.pages) && msg.extra.comic_orb.pages.length
+            || (marker && source.includes(marker))
             || /<!--\s*comic-orb(?::image|-pages)?\b/i.test(source)
             || /#comic-orb-cache=/i.test(source)
             || /!\[[^\]]*\]\([^)]+\)/i.test(source)
