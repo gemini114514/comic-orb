@@ -1,0 +1,35 @@
+# Local secrets and API configuration
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*api-key*
+*apikey*
+*token*
+*cookie*
+
+# Local SillyTavern/user data
+data/
+test-data/
+user/
+images/
+chats/
+characters/
+logs/
+cache/
+*.jsonl
+comic-orb-logs-*.json
+comic-orb-model-io-*.json
+
+# Editor/OS/build noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+node_modules/
+dist/
+coverage/
+*.tmp
+*.bak

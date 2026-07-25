@@ -1,0 +1,24 @@
+{
+  "format": "comic-orb-regex-list",
+  "version": 1,
+  "rules": [
+    {
+      "enabled": true,
+      "pattern": "(?:<(?:thinking|think|reasoning|analysis)\\b[^>]*>\\s*)?(?:\\[metacognition\\]|\\[(?:thinking|reasoning|analysis)\\])[\\s\\S]*?(?:^[ \\t]*<\\/\\s*(?:thinking|think|reasoning|analysis)\\s*>?[ \\t]*$|\\[\\/(?:metacognition|thinking|reasoning|analysis)\\]|(?=^[ \\t]*<(?:dm_think|content|CheckResult|safe|UpdateVariable)\\b)|(?=^\\[楼层 \\d+\\])|(?![\\s\\S]))|<(?:thinking|think|reasoning|analysis)\\b[^>]*>[\\s\\S]*?(?:<\\/\\s*(?:thinking|think|reasoning|analysis)\\s*>?|\\[\\/(?:metacognition|thinking|reasoning|analysis)\\]|(?=^[ \\t]*<(?:dm_think|content|CheckResult|safe|UpdateVariable)\\b)|(?=^\\[楼层 \\d+\\])|(?![\\s\\S]))",
+      "flags": "gim",
+      "replacement": ""
+    },
+    {
+      "enabled": true,
+      "pattern": "<(dm_think|CheckResult|safe|UpdateVariable)\\b[^>]*>[\\s\\S]*?<\\/\\s*\\1\\s*>",
+      "flags": "gi",
+      "replacement": ""
+    },
+    {
+      "enabled": true,
+      "pattern": "<\\/?(?![\\p{L}_][\\p{L}\\p{N}_:.-]*_(?:行为逻辑|心里话)\\s*>)[\\p{L}_][\\p{L}\\p{N}_:.-]*(?:\\s[^<>]*?)?\\/?\\s*>",
+      "flags": "gu",
+      "replacement": ""
+    }
+  ]
+}

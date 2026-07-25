@@ -1,0 +1,13 @@
+{
+  "display_name": "漫画工房悬浮球",
+  "loading_order": 50,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "gemini114514",
+  "co_author": "codex",
+  "license": "CC BY-NC-SA 4.0",
+  "version": "1.21.0",
+  "homePage": "https://github.com/SillyTavern/SillyTavern"
+}
