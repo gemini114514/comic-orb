@@ -23,7 +23,7 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 公开仓库发布后可在酒馆前端脚本中加载固定版本：
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/发布账号/comic-orb@v1.21.0/index.js';
+import 'https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.21.0/index.js';
 ```
 
 建议固定版本号，不要在长期使用环境引用 `main`。
