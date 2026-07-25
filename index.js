@@ -325,7 +325,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const style = document.createElement('link');
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
-        style.href = new URL('./style.css?v=20260725-basic-full-mode-1', import.meta.url).href;
+        style.href = new URL('./style.css?v=20260725-mobile-model-scroll-1', import.meta.url).href;
         document.head.appendChild(style);
     }
 
@@ -2741,14 +2741,21 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const needle = String(query).trim().toLocaleLowerCase(); const matches = modelCandidates[prefix].filter(id => id.toLocaleLowerCase().includes(needle));
         box.innerHTML = matches.length ? matches.map(id => `<button type="button" class="co-model-option" data-model="${esc(id)}">${esc(id)}</button>`).join('') : '<div class="co-model-empty">没有匹配的候选模型，可继续手动输入</div>';
         box.classList.toggle('open', modelCandidates[prefix].length > 0);
-        box.querySelectorAll('.co-model-option').forEach(button => button.addEventListener('pointerdown', event => {
-            event.preventDefault(); const input = root.querySelector(`#${prefix}-model`); input.value = button.dataset.model; box.classList.remove('open'); input.dispatchEvent(new Event('change', { bubbles: true }));
-        }));
+        box.querySelectorAll('.co-model-option').forEach(button => {
+            button.addEventListener('pointerdown', event => {
+                // Only suppress desktop mouse focus transfer. Preventing a touch
+                // pointerdown cancels native scrolling in Android/TT WebViews.
+                if (event.pointerType === 'mouse') event.preventDefault();
+            });
+            button.addEventListener('click', () => {
+                const input = root.querySelector(`#${prefix}-model`); input.value = button.dataset.model; box.classList.remove('open'); input.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        });
         box.querySelectorAll('.co-model-option').forEach((button, index, buttons) => button.addEventListener('keydown', event => {
             if (event.key === 'ArrowDown') { event.preventDefault(); buttons[Math.min(index + 1, buttons.length - 1)].focus(); }
             if (event.key === 'ArrowUp') { event.preventDefault(); index ? buttons[index - 1].focus() : root.querySelector(`#${prefix}-model`).focus(); }
             if (event.key === 'Escape') { box.classList.remove('open'); root.querySelector(`#${prefix}-model`).focus(); }
-            if (event.key === 'Enter') { event.preventDefault(); button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); }
+            if (event.key === 'Enter') { event.preventDefault(); button.click(); }
         }));
     }
     function closeModelOptions(exceptPrefix = '') { for (const prefix of ['ad', 'sb', 'dr']) if (prefix !== exceptPrefix) root.querySelector(`#${prefix}-model-options`)?.classList.remove('open'); }

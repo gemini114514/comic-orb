@@ -174,4 +174,4 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.25.0`
+当前版本：`1.25.1`
