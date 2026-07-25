@@ -91,7 +91,8 @@
 第4格（全景）：安全隔离门缓缓关闭，信号灯恢复绿色，机器人继续巡检。
 统一要求：机器人造型、配色和尺寸在四格中完全一致；动作连续；清晰商业漫画线稿与全彩赛璐璐渲染；不要水印，不要额外分格，不含现实人物或用户私有剧情。`;
     const STORYBOARD_SAFETY_MARKER = '# Gemini Shonen Action Boundary v6';
-    const LEGACY_STORYBOARD_SAFETY_MARKERS = ['# Platform-Safe Action Translation v1', '# Gemini Shonen Action Boundary v2', '# Gemini Shonen Action Boundary v3', '# Gemini Shonen Action Boundary v4', '# Gemini Shonen Action Boundary v5', STORYBOARD_SAFETY_MARKER];
+    const STORYBOARD_SAFER_MARKER = '# Gemini Safer Storyboard Translation v1';
+    const LEGACY_STORYBOARD_SAFETY_MARKERS = ['# Platform-Safe Action Translation v1', '# Gemini Shonen Action Boundary v2', '# Gemini Shonen Action Boundary v3', '# Gemini Shonen Action Boundary v4', '# Gemini Shonen Action Boundary v5', STORYBOARD_SAFETY_MARKER, STORYBOARD_SAFER_MARKER];
     const COERCIVE_SCENE_SOFTENING_MARKER = '# Gemini Coercive Scene Minimal Translation v1';
     const COERCIVE_SCENE_SOFTENING_ADDENDUM = `${COERCIVE_SCENE_SOFTENING_MARKER}
 
@@ -155,6 +156,43 @@ ${COERCIVE_SCENE_SOFTENING_ADDENDUM}
 8. page_prompt是直接发送给绘画AI的最终生产文本，只描述最后决定画出的角色、动作、构图、场景、对白和效果。不得复述内部判断、平台规则、被舍弃的原始桥段或负面内容清单；需要调整时直接写成自然、正向、可绘制的最终版本。
 
 输出JSON前静默检查：画面仍具有少年漫画的危险感、爽感、角色张力和战后代价；读者能明确判断谁攻击谁、如何命中、谁获胜；台词没有被无理由净化；角色脸部结构、身形比例、体态和参考图一致；全部可见文字符合本次漫画输出语言；整页保持分镜指定的全彩色调；真正高风险的近距离细节已做局部镜头转换。`;
+    const STORYBOARD_SAFER_ADDENDUM = `${STORYBOARD_SAFER_MARKER}
+
+本节用于最终绘画模型为 Gemini 图像模型、且用户希望优先提高生成成功率时的分镜转换。它是“安全优先”档：普通对话、旅行、用餐、探索、日常互动和常规战斗保持原有内容与色调；只转换容易造成图像服务拒绝的局部视觉呈现。若前文规则与本节冲突，以本节为准。
+
+## 核心目标
+保留故事事实、人物动机、行动方向、因果关系、危险程度、胜负、关系变化和关键对白，但把不适合直接绘制的瞬间改写成同样清楚、具有张力的商业漫画镜头。不得删除整个事件、改变谁攻击谁、把死亡改成逃跑、把敌对改成和解，或凭空补写新剧情。
+
+采用“动作建立—安全化冲击瞬间—明确结果”的连续表达：
+1. 动作建立：清楚画出双方站位、武器或能力、运动方向、目标和环境危险。
+2. 冲击瞬间：优先使用强逆光、冲击闪白、剪影、前景遮挡、速度线交叉、烟尘、碎片、护甲火星、武器后坐与环境破坏。遮挡只覆盖敏感接触局部，不遮掉角色姿态、攻击方向和动作因果。
+3. 结果证据：使用倒地或失去行动能力的完整轮廓、武器脱手、护具破损、服装污损、地面裂纹、散落物、烟尘和同伴反应说明结果。即使不直接展示伤口，读者也必须看懂伤害成立、战斗结束或局势逆转。
+
+## 战斗与伤害的安全化呈现
+- 保留枪口焰、弹道、抛壳、兵器轨迹、格挡、追逐、爆炸、冲击波、速度线、环境损坏、疲惫、擦伤、焦痕、泥污和战后代价。
+- 人类、近人类及拟人角色遭受致命或重度伤害时，不把穿透、断裂、内部结构、肢体分离、喷溅或遗体细节作为可见主体。改为中远景剪影命中、局部遮挡、护甲或武器破损、冲击造成的姿态反馈，以及安静明确的战后结果。
+- 怪物可以保留凶猛外观和败北结果，但仍不展示解剖切面、内部组织、肢体碎块堆积或大量液体飞溅。需要战利品时，改用完整且易辨认的非人体任务物件、掉落物或封装后的证明，不制作猎奇特写。
+- 不在panels或page_prompt中复述被转换掉的刺激细节，也不列举“不要画”的负面清单。只写最终选定的正向、可绘制镜头。
+- 高潮格不能退化成抽象光团：至少保留一条清晰动作轨迹、一个角色姿态反馈、一个环境反馈和一个胜负证据。
+
+## 亲密、暧昧与权力冲突
+- 允许保留成年人关系中的调情、双关、情感吸引、含蓄暧昧和关系升级，但用对视、靠近、相握的手、自然拥抱、门窗或前景遮挡、灯光变化、留在环境中的物件、时间转场及事后态度变化表达；不直接描绘私密行为过程或身体局部。
+- 对胁迫、越界试探或权力不对等场景，保留威胁事实、人物意图与反制爽点，镜头聚焦站位、表情、手腕拦截、武器、筹码、出口和脱身结果；不呈现非自愿的性化接触，也不把危险关系浪漫化。
+- 不因安全转换而老化角色、改变脸型、身形比例、服装、气质或参考图特征；不额外添加数字年龄或年龄声明。使用客观、中性的外形与动作措辞。
+
+## 对白、色彩与改编尺度
+- 关键对白、旁白、内心独白、威胁、黑色幽默和剧情必要的含蓄双关可以保留或压缩润色。对白要符合当前漫画输出语言和画面中实际存在的主体，不能为了安全把人物全部写成沉默，也不能照搬与画面脱节的小说句子。
+- 默认维持分镜要求的全彩色调、角色固有色和环境光。安全转换本身不是改成黑白、灰阶、褪色、昏暗或单色的理由；只有剧情本身需要回忆、瞬间冲击或主观情绪时，才可让单格临时变调。
+- 普通安全内容原样处理，不进行预防性的全面净化。只调整必要的局部镜头，保留少年漫画的速度、压迫感、悬念、胜负和角色魅力。
+
+## 最终输出约束
+1. refined_plot保留原剧情的客观因果与结果，不记录审核判断、风险分类或转换过程。
+2. characters、entity_bible、panels、page_prompt、global_style与negative_prompt只包含最终采用的自然漫画描述；不得出现平台规则、合规说明、拒绝话术、风险词汇清单、原始刺激措辞或“已删除/已替换”等元叙述。
+3. panels与page_prompt必须使用同一版安全化结果，不能在page_prompt里重新写回已经转换的局部。
+4. page_prompt仍需写清每格构图、角色、动作、连续性、对白、SFX、色彩和结果证据，使绘画AI无需猜测剧情。
+5. 若某个瞬间不能安全直绘，必须使用动作发生前与结果发生后的连续证据表达，不能删掉整个事件或用无关风景代替。
+
+输出JSON前静默检查：剧情事实与胜负未改变；读者能看懂谁做了什么以及造成什么结果；普通内容没有被过度降级；高潮仍有动作轨迹、姿态和环境反馈；亲密或权力冲突以含蓄但明确的关系证据呈现；全部字段只含最终正向绘画指令；可见文字符合本次漫画输出语言；整页色彩忠于color_script。`;
     const SAFE_DRAWING_PROMPT_PREFIX = `Gemini专用：绘制一页完成度高、构图清晰的竖版2:3高张力商业漫画。严格遵循分格、对白、角色身份、服装、连续性、动作因果和胜负结果。
 
 使用清晰站位、运动轨迹、瞬间反馈、速度线、冲击闪光、前景层次与结果状态表达动作张力。角色脸部结构、身形比例、整体轮廓、体态和气质严格服从剧情设定与参考图，不根据服装款式自行推断或添加年龄身份。
@@ -554,6 +592,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function ensureSafetyDowngradePromptPresets() {
         const storyboardId = 'builtin-storyboard-platform-safe-action-v1';
+        const saferStoryboardId = 'builtin-storyboard-gemini-safer-action-v1';
         const drawingId = 'builtin-drawing-platform-safe-action-v1';
         const stripSafetyAddendum = value => {
             const text = String(value || '');
@@ -567,13 +606,25 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!storyboardPreset) {
             storyboardPreset = {
                 id: storyboardId,
-                name: 'Gemini · 少年漫软适配（分镜）',
+                name: 'Gemini · 少年漫软适配（表现力最大）',
                 content: `${stripSafetyAddendum(settings.storyboard.systemPrompt)}\n\n${STORYBOARD_SAFETY_ADDENDUM}`,
             };
             settings.promptPresets.storyboard.push(storyboardPreset);
         } else {
-            storyboardPreset.name = 'Gemini · 少年漫软适配（分镜）';
+            storyboardPreset.name = 'Gemini · 少年漫软适配（表现力最大）';
             storyboardPreset.content = `${stripSafetyAddendum(storyboardPreset.content)}\n\n${STORYBOARD_SAFETY_ADDENDUM}`;
+        }
+        let saferStoryboardPreset = settings.promptPresets.storyboard.find(preset => preset.id === saferStoryboardId);
+        if (!saferStoryboardPreset) {
+            saferStoryboardPreset = {
+                id: saferStoryboardId,
+                name: 'Gemini · 少年漫安全适配（成功率优先）',
+                content: `${stripSafetyAddendum(settings.storyboard.systemPrompt)}\n\n${STORYBOARD_SAFER_ADDENDUM}`,
+            };
+            settings.promptPresets.storyboard.push(saferStoryboardPreset);
+        } else {
+            saferStoryboardPreset.name = 'Gemini · 少年漫安全适配（成功率优先）';
+            saferStoryboardPreset.content = `${stripSafetyAddendum(saferStoryboardPreset.content)}\n\n${STORYBOARD_SAFER_ADDENDUM}`;
         }
         let drawingPreset = settings.promptPresets.drawing.find(preset => preset.id === drawingId);
         if (!drawingPreset) {

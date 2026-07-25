@@ -72,6 +72,8 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 - 保存提示词预设；
 - 配置额外请求头和请求体。
 
+分镜预设内置两档 Gemini 适配：“少年漫软适配（表现力最大）”尽量保留战斗与关系张力；“少年漫安全适配（成功率优先）”只把高风险局部转换成剪影、遮挡、冲击反馈与明确结果镜头。升级不会自动切换现有选择，可按题材自行选用。
+
 API Key 只保存在当前浏览器 `localStorage`。导出的 API 实例 JSON 会包含 Key，请勿公开。
 
 ## 生成漫画
@@ -174,7 +176,7 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.25.4`
+当前版本：`1.25.5`
 
 ### TT 酒馆与代码渲染兼容
 
