@@ -683,6 +683,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             }
             settings.migrations.ageNeutralAppearancePromptsV9 = true;
         }
+        if (!settings.migrations.geminiSaferProductionBoundaryV10) {
+            if (settings.activePromptPreset.storyboard === saferStoryboardId) {
+                settings.storyboard.systemPrompt = saferStoryboardPreset.content;
+                const activeStoryboardProfile = settings.apiProfiles.storyboard.find(profile => profile.id === settings.activeApiProfile.storyboard);
+                if (activeStoryboardProfile?.config) activeStoryboardProfile.config.systemPrompt = saferStoryboardPreset.content;
+            }
+            settings.migrations.geminiSaferProductionBoundaryV10 = true;
+        }
     }
     function isGeminiDrawingConfig(conf) {
         return /gemini/i.test([conf?.model, conf?.baseUrl, conf?.path].filter(Boolean).join(' '));
