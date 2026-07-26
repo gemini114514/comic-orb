@@ -175,6 +175,17 @@ ${COERCIVE_SCENE_SOFTENING_ADDENDUM}
 - 不在panels或page_prompt中复述被转换掉的刺激细节，也不列举“不要画”的负面清单。只写最终选定的正向、可绘制镜头。
 - 高潮格不能退化成抽象光团：至少保留一条清晰动作轨迹、一个角色姿态反馈、一个环境反馈和一个胜负证据。
 
+## 成功率优先档的最终生产边界
+本档不追求“尽量贴近直接命中后再局部遮挡”，而是优先让每一页能被严格的 Gemini 图像服务稳定接受。下面规则高于基础提示词中关于肉体变形、头部重击、伤口、血战、残骸和处决特写的示例；这些基础示例不得进入最终JSON。
+
+- 对任何人形、近人形、拟人怪物或感染者，不把头、脸、颈部、关节或躯干作为兵器直接命中的特写焦点，也不描写身体凹陷、断裂、碎裂、穿透、喷溅、失去肢体或悬挂的无力身体。保留同一战斗结果时，改成攻击轨迹掠过前景、对手格挡失败、冲击气浪将其推离、武器脱手、撞上车辆或墙面、烟尘遮挡接触瞬间，随后以完整轮廓倒地或无法继续战斗收尾。
+- 致命攻击不拆成多个连续的身体命中特写。使用“逼近与闪避—冲击闪白或环境碰撞—安静结果”三段式；高潮格聚焦主角姿态、兵器弧线、速度线、冲击波和环境破坏，而不是受击身体部位。
+- 服装连续性只保留灰尘、泥水、焦痕、撕裂边缘和普通战斗磨损；不要在最终输出中加入来自身体的污迹、附着物或体液。已出现这类上游描述时，直接转换为灰尘或焦痕，不解释转换过程。
+- 感染巢穴和怪物环境改写为暗色纤维网、结晶化感染层、孢子雾、龟裂硬壳或发光污染结构；避免湿润的人体组织质感、器官联想、肉块堆积及其破裂飞散。摧毁巢穴可以用燃烧、硬壳崩塌、能量熄灭和任务进度表现。
+- 对群体敌人，使用被冲击波推开、失衡退散、被障碍阻断、倒地剪影、散落武器与空出的通路表达压倒性优势；不要用堆叠遗体或身体残片证明战果。
+
+示例转换：原剧情若是主角被强敌撞向救护车后以棍棒完成反杀，最终分镜可画“主角撞上车门但迅速站稳—挥棍形成明亮弧线迫使强敌格挡—冲击气浪把强敌掀进空车厢，车门变形并冒出烟尘—强敌完整倒地无法继续行动，主角转身投出燃烧弹摧毁结晶化感染巢穴”。胜负、主角强度、车辆损坏与任务推进全部保留，但不出现身体破坏特写。
+
 ## 亲密、暧昧与权力冲突
 - 允许保留成年人关系中的调情、双关、情感吸引、含蓄暧昧和关系升级，但用对视、靠近、相握的手、自然拥抱、门窗或前景遮挡、灯光变化、留在环境中的物件、时间转场及事后态度变化表达；不直接描绘私密行为过程或身体局部。
 - 对胁迫、越界试探或权力不对等场景，保留威胁事实、人物意图与反制爽点，镜头聚焦站位、表情、手腕拦截、武器、筹码、出口和脱身结果；不呈现非自愿的性化接触，也不把危险关系浪漫化。
@@ -192,7 +203,7 @@ ${COERCIVE_SCENE_SOFTENING_ADDENDUM}
 4. page_prompt仍需写清每格构图、角色、动作、连续性、对白、SFX、色彩和结果证据，使绘画AI无需猜测剧情。
 5. 若某个瞬间不能安全直绘，必须使用动作发生前与结果发生后的连续证据表达，不能删掉整个事件或用无关风景代替。
 
-输出JSON前静默检查：剧情事实与胜负未改变；读者能看懂谁做了什么以及造成什么结果；普通内容没有被过度降级；高潮仍有动作轨迹、姿态和环境反馈；亲密或权力冲突以含蓄但明确的关系证据呈现；全部字段只含最终正向绘画指令；可见文字符合本次漫画输出语言；整页色彩忠于color_script。`;
+输出JSON前逐页静默检查：剧情事实与胜负未改变；读者能看懂谁做了什么以及造成什么结果；普通内容没有被过度降级；高潮仍有动作轨迹、姿态和环境反馈；亲密或权力冲突以含蓄但明确的关系证据呈现；所有人形或近人形战斗已经避开头颈和身体破坏特写；衣物只有非生物性的战斗磨损；感染环境已使用非解剖化结构；panels与page_prompt均只含最终正向绘画指令，没有把上游刺激措辞重新写回；可见文字符合本次漫画输出语言；整页色彩忠于color_script。`;
     const SAFE_DRAWING_PROMPT_PREFIX = `Gemini专用：绘制一页完成度高、构图清晰的竖版2:3高张力商业漫画。严格遵循分格、对白、角色身份、服装、连续性、动作因果和胜负结果。
 
 使用清晰站位、运动轨迹、瞬间反馈、速度线、冲击闪光、前景层次与结果状态表达动作张力。角色脸部结构、身形比例、整体轮廓、体态和气质严格服从剧情设定与参考图，不根据服装款式自行推断或添加年龄身份。
@@ -511,12 +522,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let runCooldownUntil = 0;
     let processTicker = null;
     let logQueue = Promise.resolve();
+    let workflowPersistenceQueue = Promise.resolve();
     const refs = Array.from({ length: 4 }, (_, i) => ({ slot: i, dataUrl: '', name: '', hint: '' }));
     let referencePresets = [];
     let refsDirty = false;
     const modelCandidates = { ad: [], sb: [], dr: [] };
     const remoteProcesses = [];
     const workflowCheckpoints = new Map();
+    const persistentWorkflowByProcess = new Map();
     const redrawLocks = new Map();
     let cacheReaderRecords = [];
     let cacheReaderIndex = 0;
@@ -1479,7 +1492,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function openDb() {
         return new Promise((resolve, reject) => {
-            const req = indexedDB.open(DB_NAME, 6);
+            const req = indexedDB.open(DB_NAME, 7);
             req.onupgradeneeded = event => {
                 if (!req.result.objectStoreNames.contains('refs')) req.result.createObjectStore('refs', { keyPath: 'slot' });
                 if (!req.result.objectStoreNames.contains('logs')) req.result.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
@@ -1489,6 +1502,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 }
                 if (!req.result.objectStoreNames.contains('refPresets')) req.result.createObjectStore('refPresets', { keyPath: 'id' });
                 if (!req.result.objectStoreNames.contains('logSummaries')) req.result.createObjectStore('logSummaries', { keyPath: 'id' });
+                if (!req.result.objectStoreNames.contains('workflows')) req.result.createObjectStore('workflows', { keyPath: 'id' });
                 if (event.oldVersion < 6) { req.transaction.objectStore('logs').clear(); req.transaction.objectStore('logSummaries').clear(); }
             };
             req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
@@ -1584,6 +1598,209 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     async function imageCacheList() { const db = await openDb(); const values = await new Promise((resolve, reject) => { const req = db.transaction('images').objectStore('images').getAll(); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); db.close(); return values.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))); }
     async function imageCacheDelete(id) { const db = await openDb(); await new Promise((resolve, reject) => { const tx = db.transaction('images', 'readwrite'); tx.objectStore('images').delete(id); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); db.close(); }
     async function imageCacheClear() { const db = await openDb(); await new Promise((resolve, reject) => { const tx = db.transaction('images', 'readwrite'); tx.objectStore('images').clear(); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); db.close(); }
+    function queueWorkflowPersistence(action) {
+        const operation = workflowPersistenceQueue.then(action);
+        workflowPersistenceQueue = operation.catch(error => console.warn('[漫画工房] 工作流检查点持久化失败', error));
+        return operation;
+    }
+    async function workflowRecordPut(record) {
+        return queueWorkflowPersistence(async () => {
+            const db = await openDb();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('workflows', 'readwrite');
+                tx.objectStore('workflows').put(record);
+                tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+            });
+            db.close();
+            return record;
+        });
+    }
+    async function workflowRecordDelete(id) {
+        if (!id) return false;
+        try {
+            await queueWorkflowPersistence(async () => {
+                const db = await openDb();
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction('workflows', 'readwrite');
+                    tx.objectStore('workflows').delete(id);
+                    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+            });
+            return true;
+        } catch (error) {
+            queueLog('error', '后台工作流检查点删除失败', { taskId: id, result: error.message });
+            return false;
+        }
+    }
+    async function workflowRecordList() {
+        await workflowPersistenceQueue.catch(() => {});
+        const db = await openDb();
+        const values = await new Promise((resolve, reject) => {
+            const req = db.transaction('workflows').objectStore('workflows').getAll();
+            req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return values;
+    }
+    function compactDrawingCheckpointResult(value) {
+        if (!value || typeof value !== 'object') return value || null;
+        const { image: _image, ...compact } = value;
+        return compact;
+    }
+    function serializeWorkflowCheckpoint(checkpoint) {
+        return {
+            ...checkpoint,
+            processId: String(checkpoint.processId || ''),
+            segmentResults: [...(checkpoint.segmentResults instanceof Map ? checkpoint.segmentResults : new Map()).entries()],
+            drawingResults: [...(checkpoint.drawingResults instanceof Map ? checkpoint.drawingResults : new Map()).entries()]
+                .map(([key, value]) => [key, compactDrawingCheckpointResult(value)]),
+            savedUrls: [...(checkpoint.savedUrls instanceof Map ? checkpoint.savedUrls : new Map()).entries()],
+            singleResult: compactDrawingCheckpointResult(checkpoint.singleResult),
+        };
+    }
+    async function hydrateDrawingCheckpointResult(value) {
+        if (!value?.cacheId) return null;
+        const cache = await imageCacheGet(value.cacheId);
+        if (!cache?.dataUrl) return null;
+        return { ...value, image: cache.dataUrl, prompt: value.prompt || cache.prompt || cache.pagePrompt || '', timing: value.timing || cache.timing || null };
+    }
+    async function hydrateWorkflowCheckpoint(raw = {}, job = {}) {
+        const checkpoint = {
+            ...raw,
+            processId: String(raw.processId || ''),
+            segmentResults: new Map(Array.isArray(raw.segmentResults) ? raw.segmentResults : []),
+            drawingResults: new Map(),
+            savedUrls: new Map(Array.isArray(raw.savedUrls) ? raw.savedUrls : []),
+            singleResult: null,
+        };
+        for (const [key, value] of Array.isArray(raw.drawingResults) ? raw.drawingResults : []) {
+            const hydrated = await hydrateDrawingCheckpointResult(value);
+            if (hydrated) checkpoint.drawingResults.set(Number(key), hydrated);
+        }
+        checkpoint.singleResult = await hydrateDrawingCheckpointResult(raw.singleResult);
+
+        // A refresh can land after an image reached IndexedDB but before the
+        // in-memory map was updated. Recover those pages by immutable batch id.
+        if (job.id) {
+            const cached = (await imageCacheList()).filter(record => !record.test && record.batchId === job.id);
+            for (const record of cached) {
+                const page = Number(record.pageNumber || 1);
+                if (checkpoint.drawingResults.has(page)) continue;
+                const planPage = checkpoint.plan?.pages?.find(item => Number(item.page) === page);
+                checkpoint.drawingResults.set(page, {
+                    page,
+                    panels: Array.isArray(planPage?.panels) ? planPage.panels.length : 0,
+                    image: record.dataUrl,
+                    timing: record.timing || null,
+                    cacheId: record.id,
+                    prompt: record.prompt || record.pagePrompt || '',
+                });
+            }
+            if (!checkpoint.singleResult && !job.reStoryboard) {
+                const record = cached.find(item => Number(item.pageNumber || 1) === Number(job.pageNumber || 1));
+                if (record) checkpoint.singleResult = { image: record.dataUrl, timing: record.timing || null, cacheId: record.id, prompt: record.prompt || record.pagePrompt || '' };
+            }
+        }
+        return checkpoint;
+    }
+    async function persistWorkflowCheckpoint(kind, job, checkpoint) {
+        try {
+            const process = remoteProcesses.find(item => item.id === checkpoint.processId);
+            const record = {
+                id: String(job.id),
+                version: 1,
+                kind,
+                savedAt: new Date().toISOString(),
+                job: clone(job),
+                checkpoint: serializeWorkflowCheckpoint(checkpoint),
+                process: process ? {
+                    id: process.id,
+                    operation: process.operation,
+                    detail: clone(process.detail || {}),
+                    status: process.status,
+                    startedAt: process.startedAt,
+                    endedAt: process.endedAt,
+                    result: process.result,
+                } : null,
+            };
+            await workflowRecordPut(record);
+            persistentWorkflowByProcess.set(checkpoint.processId, record.id);
+            return true;
+        } catch (error) {
+            queueLog('error', '后台工作流检查点持久化失败', { taskId: job?.id, stage: checkpoint?.stage, result: error.message });
+            return false;
+        }
+    }
+    async function discardPersistedWorkflow(job, processId = '') {
+        if (!job?.id) return;
+        workflowCheckpoints.delete(job.id);
+        if (processId) persistentWorkflowByProcess.delete(processId);
+        if (job.lockId) redrawLocks.delete(job.lockId);
+        await workflowRecordDelete(job.id);
+    }
+    async function restorePersistentWorkflows() {
+        let records;
+        try {
+            records = await workflowRecordList();
+        } catch (error) {
+            console.warn('[漫画工房] 无法读取刷新恢复检查点', error);
+            await writeLog('error', '刷新恢复检查点读取失败', { result: error.message });
+            return;
+        }
+        let restored = 0;
+        for (const record of records) {
+            try {
+                if (!record?.id || !['production', 'redraw'].includes(record.kind) || !record.job?.id) {
+                    if (record?.id) await workflowRecordDelete(record.id);
+                    continue;
+                }
+                if (workflowCheckpoints.has(record.job.id)) continue;
+                const job = Object.freeze(record.job);
+                const checkpoint = await hydrateWorkflowCheckpoint(record.checkpoint || {}, job);
+                let processId = String(record.process?.id || checkpoint.processId || newId());
+                if (remoteProcesses.some(item => item.id === processId)) processId = newId();
+                checkpoint.processId = processId;
+                const previousStatus = String(record.process?.status || 'unknown');
+                const restoredAt = Date.now();
+                const process = {
+                    id: processId,
+                    operation: String(record.process?.operation || (record.kind === 'redraw' ? '恢复的漫画重绘任务' : `漫画任务 #${job.shortId || String(job.id).slice(0, 8)}`)),
+                    detail: clone(record.process?.detail || { method: 'WORKFLOW', url: `chat:${job.chatId || 'current'}/floor:${job.targetFloor}` }),
+                    status: 'paused',
+                    startedAt: Number(record.process?.startedAt) || restoredAt,
+                    endedAt: restoredAt,
+                    result: `页面刷新后已恢复本地检查点（刷新前：${previousStatus}）。已完成结果不会重做；点击“重试失败阶段”只补失败或未完成部分。`,
+                    controller: new AbortController(),
+                    cancelable: false,
+                };
+                process.retry = record.kind === 'redraw'
+                    ? () => runRedrawJob(job, checkpoint)
+                    : () => runProductionJob(job, checkpoint);
+                process.abandon = () => { void discardPersistedWorkflow(job, processId); };
+                remoteProcesses.unshift(process);
+                workflowCheckpoints.set(job.id, checkpoint);
+                persistentWorkflowByProcess.set(processId, job.id);
+                if (record.kind === 'redraw' && job.lockId) {
+                    redrawLocks.set(job.lockId, { scope: redrawScope(job), page: Number(job.pageNumber || 1), allPages: Boolean(job.reStoryboard) });
+                }
+                restored++;
+            } catch (error) {
+                console.warn('[漫画工房] 单个工作流检查点恢复失败', record?.id, error);
+                await writeLog('error', '单个刷新恢复检查点损坏', { taskId: record?.id, result: error.message });
+            }
+        }
+        if (!restored) return;
+        while (remoteProcesses.length > 100) {
+            const removable = remoteProcesses.findLastIndex(item => !['running', 'paused'].includes(item.status));
+            if (removable < 0) break;
+            remoteProcesses.splice(removable, 1);
+        }
+        renderProcessCenter();
+        updateOrbProcessState();
+        await writeLog('operation', '刷新后恢复后台工作流', { restored, result: `恢复 ${restored} 个暂停任务，等待用户重试或抛弃` });
+        notify(`已从本地恢复 ${restored} 个未完成漫画任务，请在“后台进程”中继续`, 'info');
+    }
     function normalizeReferenceSlots(source) {
         if (!Array.isArray(source)) throw new Error('参考图 refs 必须是数组');
         if (source.length > 4) throw new Error('每套参考图预设最多四张');
@@ -1986,6 +2203,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             adaptation = parseAdaptationPlan(adaptationResult.text, execution.outputLanguage, execution.interpretivePageRange, execution.storyboardWorkerPageRange);
             adaptationTiming = adaptationResult.timing;
             if (checkpoint) { checkpoint.adaptation = adaptation; checkpoint.adaptationTiming = adaptationTiming; checkpoint.stage = 'storyboard'; }
+            await execution.persistCheckpoint?.();
             await writeLog('result', '剧情演绎 JSON 校验通过', execution.debugEnabled
                 ? { title: adaptation.title, language: adaptation.language, segments: adaptation.segments, timing: adaptationTiming }
                 : { result: `${adaptation.title} · ${adaptation.segments.length} 段 · ${adaptation.segments.reduce((sum, segment) => sum + Number(segment.page_count), 0)} 页`, elapsed: adaptationTiming?.elapsedText });
@@ -2015,6 +2233,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const plan = parseStoryboardPlan(result.text, segmentConf, execution.outputLanguage, exactLimits);
                 const retained = { segment, plan, timing: result.timing };
                 retainedSegments.set(Number(segment.segment), retained);
+                await execution.persistCheckpoint?.();
                 return retained;
             } catch (error) {
                 if (!controller.signal.aborted) { primaryFailure = error; primaryFailureSegment = Number(segment.segment); controller.abort(error); }
@@ -2400,6 +2619,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const result = await callDrawing(page.page_prompt, { withTiming: true, pageNumber: page.page, pagePrompt: page.page_prompt, cacheMeta: { ...cacheMeta, storyboardPlan: plan }, outputLanguage: execution.outputLanguage || plan.language, conf: execution.drawingConf, refs: execution.refs, profile: execution.drawingProfile, signal: batchController.signal });
                 const retained = { page: page.page, panels: page.panels.length, image: result.image, timing: result.timing, cacheId: result.cacheId, prompt: result.prompt };
                 retainedResults.set(Number(page.page), retained);
+                await execution.persistCheckpoint?.();
                 return retained;
             } catch (error) {
                 if (!batchController.signal.aborted) { primaryFailure = error; primaryFailurePage = Number(page.page); batchController.abort(error); }
@@ -2711,6 +2931,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         workflowCheckpoints.set(job.id, checkpoint);
         const processId = checkpoint.processId;
         const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
+        execution.persistCheckpoint = () => persistWorkflowCheckpoint('production', job, checkpoint);
+        await execution.persistCheckpoint();
         try {
             ensureNotCanceled(signal); updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 准备工作流`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
             await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, storyboardLaunchIntervalMs: execution.storyboardLaunchIntervalMs, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', storyboardInterval: execution.workflowMode === 'interpretive' ? formatDuration(execution.storyboardLaunchIntervalMs) : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
@@ -2724,6 +2946,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 plan = interpretive.plan;
                 storyboardTiming = { elapsedMs: interpretive.wallMs, elapsedText: interpretive.wallTime, adaptation: interpretive.adaptationTiming, segments: interpretive.segmentTimings };
                 checkpoint.plan = plan; checkpoint.storyboardTiming = storyboardTiming; checkpoint.stage = 'drawing';
+                await execution.persistCheckpoint();
             } else if (!plan) {
                 updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 直接分镜 AI`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
                 const storyboardResult = await callStoryboard(job.selection.text, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, withTiming: true, signal });
@@ -2731,6 +2954,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 plan = parseStoryboardPlan(storyboardResult.text, execution.storyboardConf, execution.outputLanguage);
                 storyboardTiming = storyboardResult.timing;
                 checkpoint.plan = plan; checkpoint.storyboardTiming = storyboardTiming; checkpoint.stage = 'drawing';
+                await execution.persistCheckpoint();
             }
             lastStoryboard = JSON.stringify(plan, null, 2); updateDebug();
             await writeLog('result', '分镜 JSON 校验通过', execution.debugEnabled ? { taskId: job.id, summary: storyboardSummary(plan), plan } : { taskId: job.id, result: storyboardSummary(plan) });
@@ -2738,6 +2962,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const cacheMeta = { batchId: job.id, sourcePlot: job.selection.text, sourceRange: { start: job.start, end: job.end }, targetFloor: job.targetFloor, chatId: job.chatId };
             const drawingBatch = await drawStoryboardPages(plan, cacheMeta, execution);
             checkpoint.stage = 'persist';
+            await execution.persistCheckpoint();
             ensureNotCanceled(signal);
             lastImage = drawingBatch.results.map(result => result.image); updateDebug();
             const drawingTiming = { wallMs: drawingBatch.wallMs, wallTime: drawingBatch.wallTime, pages: drawingBatch.results.map(result => ({ page: result.page, elapsedMs: result.timing?.elapsedMs, elapsedText: result.timing?.elapsedText })) };
@@ -2750,7 +2975,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const retainedUrl = checkpoint.savedUrls.get(Number(result.page)); if (retainedUrl) return retainedUrl;
                 try {
                     const url = await persistImage(result.image, ctx, result.page, { storage: execution.storage, signal: saveController.signal });
-                    checkpoint.savedUrls.set(Number(result.page), url); return url;
+                    checkpoint.savedUrls.set(Number(result.page), url); await execution.persistCheckpoint(); return url;
                 }
                 catch (error) { if (!saveController.signal.aborted) saveController.abort(error); throw error; }
             }));
@@ -2761,15 +2986,24 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             await writeLog('result', '漫画生成完成', execution.debugEnabled ? { taskId: job.id, targetFloor: job.targetFloor, insertedIntoFloor: insertEnabled, storyboard: plan, saved, cacheIds: drawingBatch.results.map(result => result.cacheId), timing: { storyboard: storyboardTiming, drawing: drawingTiming } } : { taskId: job.id, result: completionText, storyboardTime: storyboardTiming?.elapsedText, drawingWallTime: drawingBatch.wallTime, pageTimes: drawingTiming.pages });
             finishRemoteProcess(processId, 'success', `${completionText} · 绘画墙钟 ${drawingBatch.wallTime}`);
             workflowCheckpoints.delete(job.id);
+            persistentWorkflowByProcess.delete(processId);
+            await workflowRecordDelete(job.id);
             setStatus(`任务 #${job.shortId} 完成：${completionText}。`, 'ok'); notify(`任务 #${job.shortId}：${completionText}`, 'success');
         } catch (error) {
             const canceled = isCanceledError(error) || signal.aborted;
             if (canceled) {
                 finishRemoteProcess(processId, 'canceled', '用户取消；未继续写回正文');
                 workflowCheckpoints.delete(job.id);
+                persistentWorkflowByProcess.delete(processId);
+                await workflowRecordDelete(job.id);
             } else {
                 checkpoint.lastError = error?.message || String(error);
-                pauseRemoteProcess(processId, `${checkpoint.lastError}；已成功的演绎、分镜、图片和上传结果均保留。请选择重试失败阶段或抛弃总任务。`, () => runProductionJob(job, checkpoint), () => workflowCheckpoints.delete(job.id));
+                pauseRemoteProcess(processId, `${checkpoint.lastError}；已成功的演绎、分镜、图片和上传结果均保留，刷新页面后仍可继续。请选择重试失败阶段或抛弃总任务。`, () => runProductionJob(job, checkpoint), () => {
+                    workflowCheckpoints.delete(job.id);
+                    persistentWorkflowByProcess.delete(processId);
+                    void workflowRecordDelete(job.id);
+                });
+                await execution.persistCheckpoint();
             }
             await writeLog(canceled ? 'operation' : 'error', canceled ? '漫画生成已取消' : '漫画生成失败', execution.debugEnabled ? { taskId: job.id, error: error?.stack || String(error) } : { taskId: job.id, result: canceled ? '用户取消' : error?.message || String(error) });
             if (!canceled) { console.error('[漫画工房]', error); setStatus(`任务 #${job.shortId} 已暂停：${error?.message || String(error)}`, 'error'); notify(`任务 #${job.shortId} 已暂停，可在后台进程重试`, 'error'); }
@@ -2862,7 +3096,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini co-test" id="co-ai-regex" type="button">AI 辅助制作正则</button><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
             <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-20页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画页按设置的启动间隔依次发起，设为0可同时发起。范围包含首尾且自动剔除User楼；每次提交都会冻结模式、页数、语言、剧情、正则、API、参考图、绘画间隔和写回目标。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
           </div><button class="co-run" id="co-run">生成并发分页漫画并插入末层</button><div class="co-status" id="co-status">等待开始。直接模式需配置分镜与绘画 API；演绎模式还需配置独立演绎 API。</div></div>
-          <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并保留成功检查点；“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的Cancel会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
+          <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并持久化成功检查点；即使按 F5 或关闭后重新打开页面，也会恢复为等待处理。“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的 Cancel 会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
           <div class="co-page" data-page="refs"><div class="co-callout">参考图以命名预设管理，每套最多四张图及对应提示词。参考图只发送给启用了参考图的绘画 AI，不发送给演绎或分镜 AI；图片和预设均保存在当前浏览器 IndexedDB。</div><div class="co-profile-manager co-ref-preset-manager"><div class="co-profile-top"><label class="co-field"><span>参考图预设</span><select id="co-ref-preset"></select></label><label class="co-field"><span>预设名称</span><input id="co-ref-preset-name" placeholder="例如：主角常服"></label></div><div class="co-profile-actions"><button class="co-mini" id="co-ref-preset-new" type="button">新建</button><button class="co-mini co-test" id="co-ref-preset-save" type="button">保存修改</button><button class="co-mini co-danger" id="co-ref-preset-delete" type="button">删除</button><button class="co-mini" id="co-import-refs" type="button">导入预设库</button><input id="co-import-refs-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-refs" type="button">导出预设库</button></div><div class="co-ref-preset-state" id="co-ref-preset-state">正在读取预设…</div></div><div id="co-refs"></div></div>
           <div class="co-page" data-page="adaptation">${apiProfileManager('ad', 'adaptation')}<div class="co-grid">
             ${apiFields('ad', settings.adaptation)}
@@ -3644,10 +3878,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return ctx;
     }
     async function runRedrawJob(job, retainedCheckpoint = null) {
-        const checkpoint = retainedCheckpoint || { processId: '', adaptation: null, adaptationTiming: null, segmentResults: new Map(), plan: null, drawingResults: new Map(), savedUrls: new Map(), singleResult: null, singleSavedUrl: '' };
+        const checkpoint = retainedCheckpoint || { jobId: job.id, stage: 'start', processId: '', adaptation: null, adaptationTiming: null, segmentResults: new Map(), plan: null, drawingResults: new Map(), savedUrls: new Map(), singleResult: null, singleSavedUrl: '' };
         if (!checkpoint.processId) checkpoint.processId = startRemoteProcess(job.reStoryboard ? '重新分镜并重绘全部页面' : `异步重绘漫画第 ${job.pageNumber} 页`, { method: 'WORKFLOW', url: `chat:${job.chatId || 'current'}/floor:${job.targetFloor}/page:${job.pageNumber}` });
+        workflowCheckpoints.set(job.id, checkpoint);
         const processId = checkpoint.processId;
         const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
+        execution.persistCheckpoint = () => persistWorkflowCheckpoint('redraw', job, checkpoint);
+        await execution.persistCheckpoint();
         const cacheMeta = { batchId: job.id, sourcePlot: job.sourcePlot, sourceRange: job.sourceRange, targetFloor: job.targetFloor, chatId: job.chatId };
         try {
             ensureNotCanceled(signal); requireRedrawContext(job);
@@ -3657,17 +3894,18 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 if (!plan && execution.workflowMode === 'interpretive') {
                     updateRemoteProcess(processId, '重新演绎并并发分镜', `总页数 ${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}`);
                     const interpretive = await runInterpretiveStoryboard(job.sourcePlot, execution, signal, (_stage, payload) => updateRemoteProcess(processId, `重新分镜 · ${payload.adaptation.segments.length} 个错峰并发子任务`, `启动间隔 ${formatDuration(execution.storyboardLaunchIntervalMs)} · 成功结果将保留到检查点`));
-                    plan = interpretive.plan; checkpoint.plan = plan;
+                    plan = interpretive.plan; checkpoint.plan = plan; checkpoint.stage = 'drawing'; await execution.persistCheckpoint();
                 } else if (!plan) {
                     const raw = await callStoryboard(job.sourcePlot, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, signal });
-                    ensureNotCanceled(signal); plan = parseStoryboardPlan(raw, execution.storyboardConf, execution.outputLanguage); checkpoint.plan = plan;
+                    ensureNotCanceled(signal); plan = parseStoryboardPlan(raw, execution.storyboardConf, execution.outputLanguage); checkpoint.plan = plan; checkpoint.stage = 'drawing'; await execution.persistCheckpoint();
                 }
                 lastStoryboard = JSON.stringify(plan, null, 2); updateDebug();
                 const batch = await drawStoryboardPages(plan, cacheMeta, execution); lastImage = batch.results.map(item => item.image); updateDebug();
+                checkpoint.stage = 'persist'; await execution.persistCheckpoint();
                 let ctx = requireRedrawContext(job);
                 const saved = await Promise.all(batch.results.map(async result => {
                     const retained = checkpoint.savedUrls.get(Number(result.page)); if (retained) return retained;
-                    const url = await persistImage(result.image, ctx, result.page, { storage: execution.storage, signal }); checkpoint.savedUrls.set(Number(result.page), url); return url;
+                    const url = await persistImage(result.image, ctx, result.page, { storage: execution.storage, signal }); checkpoint.savedUrls.set(Number(result.page), url); await execution.persistCheckpoint(); return url;
                 }));
                 ensureNotCanceled(signal); ctx = requireRedrawContext(job);
                 const insertEnabled = execution.insert?.enabled !== false;
@@ -3679,10 +3917,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 if (!job.pagePrompt) throw new Error('该缓存缺少原始页分镜提示词，无法单页重绘');
                 const result = checkpoint.singleResult || await callDrawing(job.pagePrompt, { withTiming: true, pageNumber: job.pageNumber, pagePrompt: job.pagePrompt, cacheMeta: { ...cacheMeta, storyboardPlan: job.storyboardPlan }, outputLanguage: execution.outputLanguage || job.storyboardPlan?.language, conf: execution.drawingConf, refs: execution.refs, profile: execution.drawingProfile, signal });
                 checkpoint.singleResult = result;
+                checkpoint.stage = 'persist'; await execution.persistCheckpoint();
                 ensureNotCanceled(signal);
                 let ctx = requireRedrawContext(job);
                 const saved = checkpoint.singleSavedUrl || await persistImage(result.image, ctx, job.pageNumber, { storage: execution.storage, signal });
                 checkpoint.singleSavedUrl = saved;
+                await execution.persistCheckpoint();
                 ensureNotCanceled(signal); ctx = requireRedrawContext(job);
                 const insertEnabled = execution.insert?.enabled !== false;
                 if (insertEnabled) await replaceTaggedPage(ctx, job.targetFloor, job.oldCacheId, { url: saved, cacheId: result.cacheId, page: job.pageNumber }, execution.insert);
@@ -3692,13 +3932,20 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 finishRemoteProcess(processId, 'success', `${completionText} · ${result.timing?.elapsedText || '耗时未知'}`); notify(completionText, 'success');
             }
             redrawLocks.delete(job.lockId);
+            workflowCheckpoints.delete(job.id);
+            persistentWorkflowByProcess.delete(processId);
+            await workflowRecordDelete(job.id);
             await renderImageCache().catch(() => {});
         } catch (error) {
             const canceled = isCanceledError(error) || signal.aborted;
             if (canceled) {
-                finishRemoteProcess(processId, 'canceled', '用户取消；未继续写回正文'); redrawLocks.delete(job.lockId);
+                finishRemoteProcess(processId, 'canceled', '用户取消；未继续写回正文'); redrawLocks.delete(job.lockId); workflowCheckpoints.delete(job.id); persistentWorkflowByProcess.delete(processId); await workflowRecordDelete(job.id);
             } else {
-                pauseRemoteProcess(processId, `${error.message}；成功结果已保留，请选择重试或抛弃。`, () => runRedrawJob(job, checkpoint), () => redrawLocks.delete(job.lockId));
+                checkpoint.lastError = error.message;
+                pauseRemoteProcess(processId, `${error.message}；成功结果已保留，刷新页面后仍可继续。请选择重试或抛弃。`, () => runRedrawJob(job, checkpoint), () => {
+                    redrawLocks.delete(job.lockId); workflowCheckpoints.delete(job.id); persistentWorkflowByProcess.delete(processId); void workflowRecordDelete(job.id);
+                });
+                await execution.persistCheckpoint();
             }
             await writeLog(canceled ? 'operation' : 'error', canceled ? '异步漫画重绘已取消' : '异步漫画重绘已暂停', { cacheId: job.oldCacheId, targetFloor: job.targetFloor, page: job.pageNumber, result: canceled ? '用户取消' : error.message }); notify(canceled ? '重绘任务已取消' : `重绘已暂停，可在后台重试：${error.message}`, canceled ? 'info' : 'error');
         }
@@ -3718,7 +3965,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const execution = redrawExecutionSnapshot();
             if (reStoryboard && execution.workflowMode === 'interpretive') assertInterpretivePageAllocation(execution.interpretivePageRange, execution.storyboardWorkerPageRange);
             const lockId = acquireRedrawLock({ ...record, chatId: record.chatId || chatId }, reStoryboard);
-            const job = Object.freeze({ lockId, reStoryboard, oldCacheId: record.id, chatId: record.chatId || chatId, targetFloor: record.targetFloor, pageNumber: Number(record.pageNumber || 1), sourcePlot: String(record.sourcePlot || ''), sourceRange: clone(record.sourceRange || null), pagePrompt: String(record.pagePrompt || ''), storyboardPlan: clone(record.storyboardPlan || null), execution });
+            const id = newId();
+            const job = Object.freeze({ id, lockId, reStoryboard, oldCacheId: record.id, chatId: record.chatId || chatId, targetFloor: record.targetFloor, pageNumber: Number(record.pageNumber || 1), sourcePlot: String(record.sourcePlot || ''), sourceRange: clone(record.sourceRange || null), pagePrompt: String(record.pagePrompt || ''), storyboardPlan: clone(record.storyboardPlan || null), execution });
             root.querySelector('#co-redraw-dialog').close();
             void runRedrawJob(job); notify(`已加入后台：${reStoryboard ? '重新分镜并重绘全部页面' : `重绘第 ${job.pageNumber} 页`}`, 'info');
         } catch (error) { status.textContent = `无法启动：${error.message}`; await writeLog('error', '漫画重绘任务启动失败', { cacheId, result: error.message }); notify(error.message, 'error'); }
@@ -3911,6 +4159,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
     migrateLegacyTaggedMarkdown().catch(error => console.warn('[漫画工房] 旧版正文漫画标识迁移失败', error));
+    restorePersistentWorkflows().catch(error => console.warn('[漫画工房] 后台工作流刷新恢复失败', error));
     void checkLocalProxyStatus();
     if (isLocalGeminiWebConfig(settings.drawing)) void fetchModels('drawing');
     console.info('[漫画工房] 悬浮球已加载');
