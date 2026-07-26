@@ -398,7 +398,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             maxOutputTokens: 65536, maxOutputTokenField: 'auto', reasoningEffort: 'low', thinkingMode: 'default',
             testPrompt: DEFAULT_ADAPTATION_TEST_PROMPT,
             systemPrompt: DEFAULT_ADAPTATION_SYSTEM_PROMPT,
-            extraBody: '{}', extraHeaders: '{}', temporarySession: true
+            extraBody: '{}', extraHeaders: '{}', temporarySession: true, storyboardLaunchIntervalMs: 300
         },
         drawing: {
             baseUrl: 'https://api.openai.com', path: '/v1/images/generations', apiKey: '', model: 'gpt-image-1', mode: 'images', size: '1024x1536',
@@ -432,6 +432,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         ? (storedSettings.backendMode === 'full' ? 'full' : 'basic')
         : (Object.keys(storedSettings).length ? 'full' : 'basic');
     settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
+    settings.adaptation.storyboardLaunchIntervalMs = normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs);
     settings.autoRetry = normalizeAutoRetry(settings.autoRetry);
     settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(settings.storage.cachePreviewLimit);
     settings.storage.maxCacheMb = normalizeMaxCacheMb(settings.storage.maxCacheMb);
@@ -910,6 +911,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function normalizeBatchDrawingInterval(value) {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 5000;
+    }
+    function normalizeStoryboardLaunchInterval(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? Math.max(100, Math.min(2147483647, Math.round(parsed))) : 300;
     }
     function normalizeAutoRetry(value = {}) {
         const retries = Math.round(Number(value?.maxRetries));
@@ -1987,14 +1992,23 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         onStage('storyboard', { adaptation });
         const retainedSegments = checkpoint?.segmentResults || new Map();
+        const staggerMs = normalizeStoryboardLaunchInterval(execution.storyboardLaunchIntervalMs ?? execution.adaptationConf?.storyboardLaunchIntervalMs);
         const controller = new AbortController(); let primaryFailure = null; let primaryFailureSegment = null;
         if (signal) {
             if (signal.aborted) controller.abort(signal.reason);
             else signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
         }
         const pendingSegments = adaptation.segments.filter(segment => !retainedSegments.has(Number(segment.segment)));
-        const settled = await Promise.allSettled(pendingSegments.map(async segment => {
+        await writeLog('operation', '并发分镜错峰调度开始', {
+            segments: pendingSegments.length,
+            retained: retainedSegments.size,
+            staggerMs,
+            staggerTime: formatDuration(staggerMs),
+            result: pendingSegments.length ? `第一个分镜立即启动，后续每段间隔 ${formatDuration(staggerMs)}` : '没有待补分镜段',
+        });
+        const settled = await Promise.allSettled(pendingSegments.map(async (segment, launchIndex) => {
             try {
+                await abortableDelay(launchIndex * staggerMs, controller.signal);
                 const exactLimits = { pages: { min: Number(segment.page_count), max: Number(segment.page_count) }, panels: storyboardLimits(execution.storyboardConf).panels };
                 const result = await callStoryboard(adaptationSegmentPrompt(adaptation, segment), { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, limits: exactLimits, preflightNeutralize: execution.preflightNeutralize, withTiming: true, signal: controller.signal });
                 const segmentConf = { ...execution.storyboardConf, minPages: segment.page_count, maxPages: segment.page_count };
@@ -2671,6 +2685,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
+            storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             autoRetry: clone(settings.autoRetry),
@@ -2698,13 +2713,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
         try {
             ensureNotCanceled(signal); updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 准备工作流`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
-            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
+            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, storyboardLaunchIntervalMs: execution.storyboardLaunchIntervalMs, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', storyboardInterval: execution.workflowMode === 'interpretive' ? formatDuration(execution.storyboardLaunchIntervalMs) : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
             let plan = checkpoint.plan; let storyboardTiming = checkpoint.storyboardTiming;
             if (!plan && execution.workflowMode === 'interpretive') {
                 updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 演绎 AI`, `完整剧情演绎 · 总页数 ${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}`);
                 const interpretive = await runInterpretiveStoryboard(job.selection.text, execution, signal, (_stage, payload) => {
                     const segments = payload.adaptation.segments; const pages = segments.reduce((sum, segment) => sum + Number(segment.page_count), 0);
-                    updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 并发分镜 ${segments.length} 段`, `${pages} 页 · 单个分镜 AI 页数 ${execution.storyboardWorkerPageRange.spec}`);
+                    updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 错峰并发分镜 ${segments.length} 段`, `${pages} 页 · 单段 ${execution.storyboardWorkerPageRange.spec} 页 · 启动间隔 ${formatDuration(execution.storyboardLaunchIntervalMs)}`);
                 });
                 plan = interpretive.plan;
                 storyboardTiming = { elapsedMs: interpretive.wallMs, elapsedText: interpretive.wallTime, adaptation: interpretive.adaptationTiming, segments: interpretive.segmentTimings };
@@ -2852,6 +2867,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="adaptation">${apiProfileManager('ad', 'adaptation')}<div class="co-grid">
             ${apiFields('ad', settings.adaptation)}
             <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="ad-temporary" type="checkbox" ${settings.adaptation.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
+            <label class="co-field co-full"><span>演绎完成后并发分镜启动间隔（ms，最低 100）</span><input id="ad-storyboard-interval" type="number" min="100" max="2147483647" step="100" value="${esc(normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs))}"><small>第一个分镜立即启动，后续分镜按此间隔错峰发出；默认 300ms。只影响演绎分镜模式，不影响直接分镜和绘画分页间隔。</small></label>
             <label class="co-field"><span>Temperature</span><input id="ad-temperature" type="number" min="0" max="2" step="0.1" value="${esc(settings.adaptation.temperature)}"></label>
             <label class="co-field"><span>最大输出 Token</span><input id="ad-max-output-tokens" type="number" min="0" max="1048576" step="1" value="${esc(settings.adaptation.maxOutputTokens ?? 65536)}"></label>
             <label class="co-field"><span>输出上限参数名</span><select id="ad-max-output-token-field"><option value="auto" ${settings.adaptation.maxOutputTokenField === 'auto' || !settings.adaptation.maxOutputTokenField ? 'selected' : ''}>自动选择</option><option value="max_tokens" ${settings.adaptation.maxOutputTokenField === 'max_tokens' ? 'selected' : ''}>max_tokens</option><option value="max_completion_tokens" ${settings.adaptation.maxOutputTokenField === 'max_completion_tokens' ? 'selected' : ''}>max_completion_tokens</option></select></label>
@@ -3027,6 +3043,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const temporary = root.querySelector(`#${prefix}-temporary`); if (temporary) temporary.checked = conf.temporarySession !== false;
         if (kind !== 'drawing') {
             set('temperature', conf.temperature); set('max-output-tokens', conf.maxOutputTokens ?? 65536); set('max-output-token-field', conf.maxOutputTokenField || 'auto'); set('reasoning-effort', conf.reasoningEffort || 'low'); set('thinking-mode', conf.thinkingMode || 'default'); set('system', conf.systemPrompt);
+            if (kind === 'adaptation') set('storyboard-interval', normalizeStoryboardLaunchInterval(conf.storyboardLaunchIntervalMs));
             if (kind === 'storyboard') { set('min-pages', conf.minPages); set('max-pages', conf.maxPages); set('min-panels', conf.minPanels); set('max-panels', conf.maxPanels); }
         }
         else {
@@ -3259,7 +3276,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(val('co-cache-preview-limit'));
         settings.storage.maxCacheMb = normalizeMaxCacheMb(val('co-cache-max-mb'));
         settings.storage.autoCleanup = checked('co-cache-auto-cleanup');
-        settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary') };
+        settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary'), storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(val('ad-storyboard-interval')) };
         settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
         settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs') };
         save();
@@ -3609,6 +3626,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
             preflightNeutralize: Boolean(settings.preflightNeutralize),
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
+            storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             autoRetry: clone(settings.autoRetry),
@@ -3638,7 +3656,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 let plan = checkpoint.plan;
                 if (!plan && execution.workflowMode === 'interpretive') {
                     updateRemoteProcess(processId, '重新演绎并并发分镜', `总页数 ${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}`);
-                    const interpretive = await runInterpretiveStoryboard(job.sourcePlot, execution, signal, (_stage, payload) => updateRemoteProcess(processId, `重新分镜 · ${payload.adaptation.segments.length} 个并发子任务`, '成功结果将保留到检查点'));
+                    const interpretive = await runInterpretiveStoryboard(job.sourcePlot, execution, signal, (_stage, payload) => updateRemoteProcess(processId, `重新分镜 · ${payload.adaptation.segments.length} 个错峰并发子任务`, `启动间隔 ${formatDuration(execution.storyboardLaunchIntervalMs)} · 成功结果将保留到检查点`));
                     plan = interpretive.plan; checkpoint.plan = plan;
                 } else if (!plan) {
                     const raw = await callStoryboard(job.sourcePlot, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, signal });
