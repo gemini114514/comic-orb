@@ -182,9 +182,13 @@ ${COERCIVE_SCENE_SOFTENING_ADDENDUM}
 - 致命攻击不拆成多个连续的身体命中特写。使用“逼近与闪避—冲击闪白或环境碰撞—安静结果”三段式；高潮格聚焦主角姿态、兵器弧线、速度线、冲击波和环境破坏，而不是受击身体部位。
 - 服装连续性只保留灰尘、泥水、焦痕、撕裂边缘和普通战斗磨损；不要在最终输出中加入来自身体的污迹、附着物或体液。已出现这类上游描述时，直接转换为灰尘或焦痕，不解释转换过程。
 - 感染巢穴和怪物环境改写为暗色纤维网、结晶化感染层、孢子雾、龟裂硬壳或发光污染结构；避免湿润的人体组织质感、器官联想、肉块堆积及其破裂飞散。摧毁巢穴可以用燃烧、硬壳崩塌、能量熄灭和任务进度表现。
+- 普通蘑菇、菌林、孢子景观、采集、烹饪及非解剖化菌类怪物本身属于普通奇幻素材，应照常保留，不得因为“蘑菇、菌、霉菌、孢子”等名称就删掉战斗或改掉剧情。只有当菌类描述与角色身体变形、湿润组织、身体内部或直接身体破坏组合时，才把该局部改成结晶硬壳、植物状菌盖、干燥纤维、烟尘、光效和完整轮廓结果。
+- 即使敌人已变成巨龙、巨兽或大型非人怪物，也不把击穿口腔、眼部或头部结构作为高潮特写。可以让弹道击中外层甲壳、翼根旁的环境结构、能量核心护罩或其前方地面，以护甲崩解、失衡迫降、完整剪影被光芒吞没、任务面板确认和战场安静表达同一胜负。角色变形过程用体型扩张、轮廓重组、硬壳覆盖、翼状阴影展开和环境受压表现，不展示身体内部。
 - 对群体敌人，使用被冲击波推开、失衡退散、被障碍阻断、倒地剪影、散落武器与空出的通路表达压倒性优势；不要用堆叠遗体或身体残片证明战果。
 
 示例转换：原剧情若是主角被强敌撞向救护车后以棍棒完成反杀，最终分镜可画“主角撞上车门但迅速站稳—挥棍形成明亮弧线迫使强敌格挡—冲击气浪把强敌掀进空车厢，车门变形并冒出烟尘—强敌完整倒地无法继续行动，主角转身投出燃烧弹摧毁结晶化感染巢穴”。胜负、主角强度、车辆损坏与任务推进全部保留，但不出现身体破坏特写。
+
+菌类巨兽示例转换：原剧情若是变异飞龙扑来并被双枪击杀，最终分镜可画“菌甲巨龙撑开大厅、碎石与孢子尘被翼风卷起—主角双枪沿交叉弹道击中胸前外层结晶甲壳—金色冲击波令硬壳崩解并迫使巨龙完整轮廓失衡迫降—强光与尘幕遮住落地瞬间，光芒散去后只留下熄灭的菌甲、安静大厅和任务完成面板”。保留巨物压迫感、双枪反杀、圣光优势与明确击杀结果，不描写头部或身体内部。
 
 ## 亲密、暧昧与权力冲突
 - 允许保留成年人关系中的调情、双关、情感吸引、含蓄暧昧和关系升级，但用对视、靠近、相握的手、自然拥抱、门窗或前景遮挡、灯光变化、留在环境中的物件、时间转场及事后态度变化表达；不直接描绘私密行为过程或身体局部。
@@ -690,6 +694,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 if (activeStoryboardProfile?.config) activeStoryboardProfile.config.systemPrompt = saferStoryboardPreset.content;
             }
             settings.migrations.geminiSaferProductionBoundaryV10 = true;
+        }
+        if (!settings.migrations.geminiSaferCreatureBoundaryV11) {
+            if (settings.activePromptPreset.storyboard === saferStoryboardId) {
+                settings.storyboard.systemPrompt = saferStoryboardPreset.content;
+                const activeStoryboardProfile = settings.apiProfiles.storyboard.find(profile => profile.id === settings.activeApiProfile.storyboard);
+                if (activeStoryboardProfile?.config) activeStoryboardProfile.config.systemPrompt = saferStoryboardPreset.content;
+            }
+            settings.migrations.geminiSaferCreatureBoundaryV11 = true;
         }
     }
     function isGeminiDrawingConfig(conf) {
