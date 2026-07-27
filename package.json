@@ -1,6 +1,6 @@
 {
   "name": "sillytavern-comic-orb",
-  "version": "1.25.11",
+  "version": "1.25.12",
   "description": "SillyTavern comic workflow orb with independent adaptation, storyboard and drawing APIs.",
   "type": "module",
   "main": "index.js",
@@ -9,6 +9,7 @@
   "style": "style.css",
   "files": [
     "index.js",
+    "diagnose.js",
     "style.css",
     "manifest.json",
     "tag-cleanup-preset.json",

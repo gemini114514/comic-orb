@@ -6,6 +6,20 @@
 (function comicOrbBootstrap() {
     'use strict';
 
+    const COMIC_ORB_VERSION = '1.25.12';
+    globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
+    const bootTrace = (stage, detail = {}) => {
+        const event = { time: new Date().toISOString(), stage, detail };
+        if (!Array.isArray(globalThis.__comicOrbBootEvents)) globalThis.__comicOrbBootEvents = [];
+        globalThis.__comicOrbBootEvents.push(event);
+        globalThis.__comicOrbBootEvents = globalThis.__comicOrbBootEvents.slice(-80);
+        globalThis.ComicOrbDoctor?.record?.(stage, detail);
+    };
+    bootTrace('bootstrap-entered', { version: COMIC_ORB_VERSION, readyState: document.readyState });
+    void import(new URL('./diagnose.js', import.meta.url).href)
+        .then(module => module.install({ version: COMIC_ORB_VERSION }))
+        .catch(error => console.warn('[漫画工房] 无界面诊断模块加载失败', error));
+    try {
     const ROOT_ID = 'comic-orb-root';
     const STYLE_ID = 'comic-orb-style';
     const SERVER_PLUGIN_API = '/api/plugins/comic-orb';
@@ -379,7 +393,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         return text;
     }
-    if (document.getElementById(ROOT_ID)) return;
+    if (document.getElementById(ROOT_ID)) {
+        bootTrace('bootstrap-skipped-existing-root', { rootCount: document.querySelectorAll(`#${ROOT_ID}`).length });
+        return;
+    }
 
     // 让 `import '.../index.js'` 与酒馆扩展清单加载两种方式都具备完整样式。
     if (!document.getElementById(STYLE_ID)) {
@@ -387,6 +404,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
         style.href = new URL('./style.css?v=20260725-mobile-model-scroll-1', import.meta.url).href;
+        style.addEventListener('load', () => bootTrace('style-loaded', { href: style.href }), { once: true });
+        style.addEventListener('error', () => bootTrace('style-load-error', { href: style.href }), { once: true });
         document.head.appendChild(style);
     }
 
@@ -437,7 +456,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         activeReferencePreset: '',
         insert: { enabled: true, alt: 'AI 漫画', marker: '<!-- comic-orb -->' }, debug: { enabled: false, captureModelIo: true },
         autoRetry: { enabled: false, mode: 'limited', maxRetries: 3, intervalMs: 1000 },
-        interaction: { doubleClickRedraw: true, doubleClickImmediate: true, runSubmitCooldown: true },
+        interaction: { doubleClickRedraw: true, doubleClickImmediate: true, runSubmitCooldown: true, showFab: true },
         storage: { localImageRoot: 'C:\\SillyTavern\\SillyTavern\\data\\default-user', cachePreviewLimit: 5, maxCacheMb: 512, autoCleanup: true },
         fab: { x: null, y: null }, panel: { x: null, y: null }
     };
@@ -450,6 +469,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     };
     const storedSettings = safeJson(localStorage.getItem(STORE_KEY), {});
     let settings = merge(defaults, storedSettings);
+    bootTrace('settings-loaded', { bytes: localStorage.getItem(STORE_KEY)?.length || 0, stored: Boolean(Object.keys(storedSettings).length) });
     settings.backendMode = Object.hasOwn(storedSettings, 'backendMode')
         ? (storedSettings.backendMode === 'full' ? 'full' : 'basic')
         : (Object.keys(storedSettings).length ? 'full' : 'basic');
@@ -3219,6 +3239,32 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
       <dialog class="co-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画页详情</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><nav class="co-dialog-tabs"><button class="active" data-dialog-page="redraw" type="button">重绘</button><button data-dialog-page="prompt" type="button">实际提示词</button></nav><section class="co-dialog-page active" data-dialog-page="redraw"><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><div class="co-callout">确认时会冻结当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></section><section class="co-dialog-page" data-dialog-page="prompt"><textarea id="co-actual-prompt" readonly></textarea><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button><button class="co-mini" id="co-copy-prompt" type="button">复制文本</button></div></section></form></dialog>
       <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
     document.body.appendChild(root);
+    bootTrace('root-appended', { childCount: root.childElementCount });
+    const setFabVisible = visible => {
+        const next = Boolean(visible);
+        settings.interaction.showFab = next;
+        const fab = root.querySelector('#co-fab');
+        if (fab) { fab.hidden = !next; fab.style.display = next ? '' : 'none'; }
+        save();
+    };
+    const openOrbPanel = () => {
+        const panel = root.querySelector('#co-panel');
+        if (!panel) return false;
+        panel.classList.add('open');
+        panel.style.right = 'auto'; panel.style.bottom = 'auto';
+        const width = panel.offsetWidth || Math.min(430, innerWidth);
+        const height = panel.offsetHeight || Math.min(640, innerHeight);
+        const x = Math.max(0, Math.min(12, innerWidth - Math.min(width, innerWidth)));
+        const y = Math.max(0, Math.min(12, innerHeight - Math.min(height, innerHeight)));
+        panel.style.left = `${x}px`; panel.style.top = `${y}px`;
+        settings.panel = { x, y }; save();
+        void checkLocalProxyStatus();
+        return true;
+    };
+    addEventListener('comic-orb:set-fab-visible', event => setFabVisible(event.detail?.visible !== false));
+    addEventListener('comic-orb:open-panel', openOrbPanel);
+    globalThis.ComicOrbControl = { setFabVisible, openPanel: openOrbPanel };
+    setFabVisible(settings.interaction.showFab !== false);
     const reasoningField = document.createElement('label');
     reasoningField.className = 'co-field';
     reasoningField.style.marginTop = '12px';
@@ -4182,7 +4228,20 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     makeDraggable(root.querySelector('#co-fab'), root.querySelector('#co-fab'), 'fab', true);
     makeDraggable(root.querySelector('#co-head'), root.querySelector('#co-panel'), 'panel');
-    for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) { const pos = settings[key]; if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) { const el = root.querySelector(selector); el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`; } }
+    function restoreVisiblePosition(key, selector) {
+        const pos = settings[key]; if (!Number.isFinite(pos?.x) || !Number.isFinite(pos?.y)) return;
+        const el = root.querySelector(selector); if (!el) return;
+        const width = el.offsetWidth || (key === 'fab' ? 56 : Math.min(430, innerWidth));
+        const height = el.offsetHeight || (key === 'fab' ? 56 : Math.min(640, innerHeight));
+        const x = Math.max(0, Math.min(Math.max(0, innerWidth - Math.min(width, innerWidth)), pos.x));
+        const y = Math.max(0, Math.min(Math.max(0, innerHeight - Math.min(height, innerHeight)), pos.y));
+        el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${x}px`; el.style.top = `${y}px`;
+        if (x !== pos.x || y !== pos.y) {
+            settings[key] = { x, y }; save();
+            bootTrace('position-clamped', { key, fromX: pos.x, fromY: pos.y, toX: x, toY: y, viewport: `${innerWidth}x${innerHeight}` });
+        }
+    }
+    for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) restoreVisiblePosition(key, selector);
     renderRegexList(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
     initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
@@ -4190,5 +4249,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     restorePersistentWorkflows().catch(error => console.warn('[漫画工房] 后台工作流刷新恢复失败', error));
     void checkLocalProxyStatus();
     if (isLocalGeminiWebConfig(settings.drawing)) void fetchModels('drawing');
+    bootTrace('bootstrap-complete', { rootConnected: root.isConnected, fabExists: Boolean(root.querySelector('#co-fab')) });
     console.info('[漫画工房] 悬浮球已加载');
+    } catch (error) {
+        bootTrace('bootstrap-fatal', { message: error?.message || String(error), stack: error?.stack || '' });
+        console.error('[漫画工房] 启动失败；可运行 await ComicOrbDoctor.download() 导出无界面诊断', error);
+        throw error;
+    }
 })();

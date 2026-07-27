@@ -20,6 +20,33 @@ https://github.com/gemini114514/comic-orb
 
 安装完成后默认进入**基础模式**，无需安装后端组件，刷新页面即可直接使用。
 
+## 悬浮球没有出现时
+
+打开 SillyTavern 顶部的“扩展程序”面板，找到“漫画工房悬浮球”。这里不依赖悬浮球界面，可以直接：
+
+- 开关“显示悬浮球”；
+- 点击“打开漫画球界面”；
+- 运行无界面诊断并在设置区查看摘要；
+- 导出不含密钥、聊天正文、参考图和图片数据的 DEBUG JSON；
+- 重置跑到屏幕外的悬浮球与面板位置；
+- 开启启动追踪并刷新，捕获初始化阶段异常。
+
+如果连这个设置项也没有出现，打开浏览器开发者工具的 Console，执行：
+
+```js
+const doctor = await import('/scripts/extensions/third-party/comic-orb/diagnose.js');
+await doctor.download();
+```
+
+若本地诊断模块也无法加载，可临时使用对应发布版本：
+
+```js
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.25.12/diagnose.js');
+await doctor.download();
+```
+
+把下载的 `comic-orb-headless-diagnostics-*.json` 发给维护者即可。也可以先运行 `doctor.resetPosition()` 后刷新，快速排除桌面、手机、缩放比例切换造成的悬浮球坐标越界。
+
 ### 本地安装
 
 下载仓库，把整个 `comic-orb` 文件夹放到：
