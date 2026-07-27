@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.25.14/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.25.15/diagnose.js');
 await doctor.download();
 ```
 

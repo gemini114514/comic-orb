@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.25.14';
+    const COMIC_ORB_VERSION = '1.25.15';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -2779,10 +2779,28 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             if (chatWriteTails.get(key) === tail) chatWriteTails.delete(key);
         }
     }
-    function refreshMessageIfRendered(ctx, floor, msg) {
+    function refreshMessageIfRendered(ctx, floor, msg, { rerenderText = false } = {}) {
         const element = document.querySelector(`#chat [mesid="${Number(floor)}"]`);
         if (!element) { queueLog('operation', '正文已保存，目标楼层当前未渲染', { floor, result: '跳过即时 DOM 刷新；滚动到该楼层或刷新聊天后会显示' }); return false; }
-        try { ctx.updateMessageBlock(floor, msg); return true; }
+        try {
+            // A comic write normally changes only extra.media. Re-rendering mes_text
+            // here destroys live DOM produced by display regex scripts and can make
+            // their HTML fall back to visible source text. Keep that subtree intact
+            // and ask SillyTavern to refresh reasoning/media only.
+            if (rerenderText) {
+                if (typeof ctx.messageFormatting === 'function') {
+                    const text = msg?.extra?.display_text || msg.mes;
+                    const sanitizerOverrides = msg?.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
+                    const html = ctx.messageFormatting(text, msg.name, msg.is_system, msg.is_user, Number(floor), sanitizerOverrides, false);
+                    const textElement = element.querySelector('.mes_text');
+                    if (textElement) textElement.innerHTML = html;
+                } else {
+                    queueLog('operation', '旧版正文已保存但当前酒馆缺少安全文本重绘接口', { floor, result: '仅刷新媒体；下次重新加载聊天时正文会按新内容显示' });
+                }
+            }
+            ctx.updateMessageBlock(floor, msg, { rerenderMessage: false });
+            return true;
+        }
         catch (error) { console.warn('[漫画工房] 正文已保存，但即时消息块刷新失败', error); queueLog('error', '正文已保存但即时 DOM 刷新失败', { floor, result: error.message }); return false; }
     }
     function comicMediaAttachment(item, index = 0, insertConf = settings.insert) {
@@ -2836,6 +2854,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return items;
     }
     function writeComicMedia(msg, items, insertConf = settings.insert) {
+        const previousText = String(msg?.mes || '');
         if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
         const retained = Array.isArray(msg.extra.media) ? msg.extra.media.filter(attachment => !comicMediaInfo(attachment, msg)) : [];
         const attachments = items.map((item, index) => comicMediaAttachment(item, index, insertConf));
@@ -2853,15 +2872,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         // v1.25.1 and earlier appended Markdown to mes. Remove only our own tagged
         // block while leaving the user's original Markdown/code/HTML byte-for-byte.
         msg.mes = removeLegacyComicMarkdown(msg.mes, insertConf);
+        return msg.mes !== previousText;
     }
     async function insertIntoFloor(ctx, floor, imageUrl) {
         const expectedChatId = currentChatId(ctx);
         return withChatWriteLock(expectedChatId, `向第 ${floor} 层插入漫画`, async freshCtx => {
             const msg = freshCtx.chat[floor];
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
-            writeComicMedia(msg, [{ url: imageUrl, cacheId: 'legacy', page: 1 }], settings.insert);
+            const textChanged = writeComicMedia(msg, [{ url: imageUrl, cacheId: 'legacy', page: 1 }], settings.insert);
             await freshCtx.saveChat();
-            refreshMessageIfRendered(freshCtx, floor, msg);
+            refreshMessageIfRendered(freshCtx, floor, msg, { rerenderText: textChanged });
         });
     }
     function taggedPageMarkdown(item, index = 0, insertConf = settings.insert) {
@@ -2875,13 +2895,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return withChatWriteLock(expectedChatId, `向第 ${floor} 层写回 ${items.length} 页漫画`, async freshCtx => {
             const msg = freshCtx.chat[floor];
             if (!msg) throw new Error(`目标楼层 ${floor} 不存在`);
-            writeComicMedia(msg, items, insertConf);
+            const textChanged = writeComicMedia(msg, items, insertConf);
             await freshCtx.saveChat();
             const savedMedia = Array.isArray(freshCtx.chat[floor]?.extra?.media) ? freshCtx.chat[floor].extra.media : [];
             const savedIds = new Set(savedMedia.map(attachment => comicMediaInfo(attachment, freshCtx.chat[floor])).filter(Boolean).map(info => info.cacheId));
             const missingCacheId = items.find(item => item.cacheId && !savedIds.has(String(item.cacheId)));
             if (missingCacheId) throw new Error(`第 ${floor} 层保存后校验失败：缺少漫画缓存标识 ${missingCacheId.cacheId}`);
-            refreshMessageIfRendered(freshCtx, floor, msg);
+            refreshMessageIfRendered(freshCtx, floor, msg, { rerenderText: textChanged });
         });
     }
     async function replaceTaggedPage(ctx, floor, oldCacheId, item, insertConf = settings.insert) {
@@ -2911,9 +2931,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 ? { url: item.url, cacheId: item.cacheId, page: item.page }
                 : page);
             if (!legacyItems.length) throw new Error('正文中的旧版漫画标签无法迁移，请从缓存页使用“重新上传写回”');
-            writeComicMedia(msg, legacyItems, insertConf);
+            const textChanged = writeComicMedia(msg, legacyItems, insertConf);
             await freshCtx.saveChat();
-            refreshMessageIfRendered(freshCtx, floor, msg);
+            refreshMessageIfRendered(freshCtx, floor, msg, { rerenderText: textChanged });
         });
     }
     function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -2938,7 +2958,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             });
             if (changed) {
                 await freshCtx.saveChat();
-                changedFloors.forEach(floor => refreshMessageIfRendered(freshCtx, floor, freshCtx.chat[floor]));
+                changedFloors.forEach(floor => refreshMessageIfRendered(freshCtx, floor, freshCtx.chat[floor], { rerenderText: true }));
             }
             return { changed };
         });
