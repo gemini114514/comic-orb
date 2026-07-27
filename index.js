@@ -208,6 +208,13 @@ ${COERCIVE_SCENE_SOFTENING_ADDENDUM}
 5. 若某个瞬间不能安全直绘，必须使用动作发生前与结果发生后的连续证据表达，不能删掉整个事件或用无关风景代替。
 
 输出JSON前逐页静默检查：剧情事实与胜负未改变；读者能看懂谁做了什么以及造成什么结果；普通内容没有被过度降级；高潮仍有动作轨迹、姿态和环境反馈；亲密或权力冲突以含蓄但明确的关系证据呈现；所有人形或近人形战斗已经避开头颈和身体破坏特写；衣物只有非生物性的战斗磨损；感染环境已使用非解剖化结构；panels与page_prompt均只含最终正向绘画指令，没有把上游刺激措辞重新写回；可见文字符合本次漫画输出语言；整页色彩忠于color_script。`;
+    const STORYBOARD_SAFER_FINAL_PASS = `【漫画球成功率优先最终复核——覆盖前文且必须执行】
+在输出JSON前，对refined_plot、global_style、characters、entity_bible、每个panel及每个page_prompt做最后一次一致性改写。这里只修改表现手法，不改变剧情事实、敌人身份、战斗胜负、击杀数量、任务结果、角色强度、对白意图、页数或格数。
+1. 大量或长期战斗用交叉弹道、远景敌群退散、烟尘遮挡、散落武器、空出的道路、计数器跳动、时间流逝蒙太奇和任务面板表达；战场地面保持为尘土、碎石、落叶、焦痕与普通环境损坏，不用身体残留物证明数量。
+2. 单个敌人的败北用外层护甲或甲壳崩解、武器脱手、失衡退场、完整轮廓倒地、强光或烟尘遮挡落地瞬间、战场安静及任务提示表达；高潮焦点放在主角姿态、攻击轨迹和环境反馈。
+3. 菌类、感染、怪物与变形题材可以完整保留，但只用菌盖、孢子尘、干燥纤维、结晶硬壳、翼状阴影、体型扩张和完整怪物轮廓表现，不写身体内部或湿润附着物。
+4. 最终JSON只写已经改好的正向画面。不要说明检查过程，不要列出被舍弃的说法，不要把上游原措辞留在negative_prompt、continuity、effects、dialogue、visual_anchor或page_prompt中的任何一处。
+普通蘑菇、普通菌类生态、非解剖化奇幻怪物和没有上述表现的普通动作场景保持原样，不做额外降级。`;
     const SAFE_DRAWING_PROMPT_PREFIX = `Gemini专用：绘制一页完成度高、构图清晰的竖版2:3高张力商业漫画。严格遵循分格、对白、角色身份、服装、连续性、动作因果和胜负结果。
 
 使用清晰站位、运动轨迹、瞬间反馈、速度线、冲击闪光、前景层次与结果状态表达动作张力。角色脸部结构、身形比例、整体轮廓、体态和气质严格服从剧情设定与参考图，不根据服装款式自行推断或添加年龄身份。
@@ -2025,10 +2032,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const normalizedPrompt = upgradeStoryboardClosedWorld(conf.systemPrompt).replace(STORYBOARD_CLOSED_WORLD_RULE, '').trim();
         const adultIdentityRule = '\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判：不得因此改变参考图脸型、身形比例、体态、服装、身体动态或原剧情镜头，也不得把角色画得更老。最终JSON不写具体年龄、“成年”等年龄声明或任何低龄/学龄称谓。上游被剔除的冲突年龄元数据不得重新猜回。';
         const effectiveSystemPrompt = `${normalizedPrompt}\n\n【漫画球本次实际校验范围】pages 必须为 ${limits.pages.min}-${limits.pages.max} 页；每页 panels 必须为 ${limits.panels.min}-${limits.panels.max} 格。此处为程序最终采用的范围，若前文存在旧范围，以此处为准。范围只规定合法上下限，并不要求选择最大值；在不低于最小值的前提下按原剧情实际密度选择最少且足够的页数与格数。\n【漫画球对白改编与证据规则】对白数量和覆盖率完全自由；允许整页无对白、只用拟声字或只保留一句关键台词，禁止为了覆盖格数硬塞对白、内心独白或旁白。若前文存在最低对白数量或覆盖比例要求，以本段自由规则为准。保留原剧情意图、关系和角色口吻，但禁止机械照抄小说原句；允许删、并、重排和重写。存在dialogue时只使用 {"type":"speech|thought|narration","speaker":"角色名","text":"漫画实际显示文字","visual_anchor":"能直接证明本句事实的当前格可见证据"}。visual_anchor不是说话者位置，也不是随便找一个可见物；它必须直接支撑text中的对象、地点或判断。例如“工地有推土机”需要工地路牌/地图/可见工地，方向盘不算；“过桥就到我家”需要地图、路标或可见庄园地标，残骸不算；“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。无法提供证据时，必须改写text使它只陈述当前画面能证明的内容，或修改panel补入证据。page_prompt逐字包含实际采用的text和框体类型，并完整描述证据画面；visual_anchor允许同义改写。\n【漫画球本地化硬规则】本次漫画输出语言为“${outputLanguage}”。顶层 language 必须逐字写成“${outputLanguage}”。所有 dialogue.text、旁白、内心独白、拟声字、标牌及画内可读文字使用该语言；专有名词只保留必要原文或缩写，不得擅自切换主要语言。page_prompt必须要求绘画模型逐字照抄该语言文本，禁止把speech/thought/narration渲染成Normal、Interior thoughts等可见标签。\n【漫画球色彩硬规则】默认全彩，并让每页page_prompt重申global_style.color_script中的环境色、人物固有色和特效色。黑白服装不等于黑白画面。只有剧情明确需要回忆、冲击瞬间或主观情绪强调时，才允许指定单格临时变调；内容降级与合规转换不得改变整页或跨页色调。\n【漫画球可选实体设定】entity_bible是软约束且完全可选，不属于程序校验条件。存在跨页人物、怪物、载具或关键道具时，可简洁记录稳定身份、数量特征、相对体型、常驻装备及明确状态变化；纯景色、一次性场景或无需连续实体时可省略或留空。收到上游entity_bible时尽量沿用，不因措辞或拼写小差异重复创建实体；只把本页实际出现实体的相关锁定自然写入page_prompt，不要向景色页强行添加角色。即使entity_bible缺字段、名称拼写不统一或局部矛盾，也应凭剧情常识继续完成分镜，禁止因此拒绝输出或等待修订。\n【漫画球外貌事实保真】角色的发色、发型、瞳色、肤色、体型、服装及其他永久外貌只能来自本次输入或上游entity_bible明确给出的事实。没有提供的项目保持未指定，不得依据姓名、种族、职业、世界观或常见二次元形象自行补全。未知外貌时仍要把分镜写具体：使用角色名、身份、动作、表情、朝向、站位、互动对象、已知装备和环境关系描述，但不要添加任何未知外貌；characters对应字段允许留空或写“未指定”。\n\n${STORYBOARD_GAZE_RULE}${adultIdentityRule}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
+        const finalEffectiveSystemPrompt = `${effectiveSystemPrompt.replace('“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。', '“渣滓们退开”需要被冲击波逼退的敌群与空出的道路，驾驶者不算。')}${normalizedPrompt.includes(STORYBOARD_SAFER_MARKER) ? `\n\n${STORYBOARD_SAFER_FINAL_PASS}` : ''}`;
         const extras = apiExtras(conf);
         const body = {
             model: conf.model,
-            messages: [{ role: 'system', content: effectiveSystemPrompt }, { role: 'user', content: `以下是楼层剧情：\n\n${transportPlot.text}` }],
+            messages: [{ role: 'system', content: finalEffectiveSystemPrompt }, { role: 'user', content: `以下是楼层剧情：\n\n${transportPlot.text}` }],
             temperature: Number(conf.temperature),
             ...textReasoningBody(conf, extras),
             ...textOutputTokenBody(conf, extras),
