@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.25.12';
+    const COMIC_ORB_VERSION = '1.25.13';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };

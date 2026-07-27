@@ -1,5 +1,5 @@
 const DOCTOR_VERSION = '1.0.0';
-const EXTENSION_VERSION = '1.25.12';
+const EXTENSION_VERSION = '1.25.13';
 const SETTINGS_KEY = 'comic-orb.settings.v1';
 const TRACE_KEY = 'comic-orb.doctor.trace.v1';
 const EVENTS_KEY = 'comic-orb.doctor.events.v1';
@@ -332,16 +332,6 @@ function installSettingsPanel() {
         </div>
       </div>`;
     host.prepend(container);
-    const header = container.querySelector('.inline-drawer-header');
-    const content = container.querySelector('.inline-drawer-content');
-    const icon = container.querySelector('.inline-drawer-icon');
-    header.addEventListener('click', event => {
-        event.stopPropagation();
-        const open = content.style.display === 'none';
-        content.style.display = open ? '' : 'none';
-        icon.classList.toggle('down', !open);
-        icon.classList.toggle('up', open);
-    });
     const visibility = container.querySelector('#comic-orb-settings-show-fab');
     visibility.checked = readFabVisibility();
     visibility.addEventListener('change', () => setFabVisible(visibility.checked));
