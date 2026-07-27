@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.25.13';
+    const COMIC_ORB_VERSION = '1.25.14';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -404,7 +404,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
         style.href = new URL('./style.css?v=20260725-mobile-model-scroll-1', import.meta.url).href;
-        style.addEventListener('load', () => bootTrace('style-loaded', { href: style.href }), { once: true });
+        style.addEventListener('load', () => { bootTrace('style-loaded', { href: style.href }); scheduleFloatingUiClamp('style-loaded'); }, { once: true });
         style.addEventListener('error', () => bootTrace('style-load-error', { href: style.href }), { once: true });
         document.head.appendChild(style);
     }
@@ -3258,6 +3258,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const y = Math.max(0, Math.min(12, innerHeight - Math.min(height, innerHeight)));
         panel.style.left = `${x}px`; panel.style.top = `${y}px`;
         settings.panel = { x, y }; save();
+        requestAnimationFrame(() => clampFloatingUi('panel-opened'));
         void checkLocalProxyStatus();
         return true;
     };
@@ -4218,30 +4219,81 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             if (event.target.closest('button') && handle !== target) return;
             if (event.button !== undefined && event.button !== 0) return;
             event.preventDefault();
+            target.dataset.coDragging = '1';
             const rect = target.getBoundingClientRect(); const startX = event.clientX; const startY = event.clientY; let moved = false;
             const pointerId = event.pointerId; target.style.right = 'auto'; target.style.bottom = 'auto';
-            const move = e => { if (e.pointerId !== pointerId) return; const dx = e.clientX - startX, dy = e.clientY - startY; moved ||= Math.abs(dx) + Math.abs(dy) > 5; target.style.left = `${Math.max(0, Math.min(innerWidth - rect.width, rect.left + dx))}px`; target.style.top = `${Math.max(0, Math.min(innerHeight - rect.height, rect.top + dy))}px`; };
+            const move = e => {
+                if (e.pointerId !== pointerId) return;
+                const dx = e.clientX - startX, dy = e.clientY - startY; moved ||= Math.abs(dx) + Math.abs(dy) > 5;
+                const next = clampFloatingCoordinates(rect.left + dx, rect.top + dy, rect.width, rect.height, key);
+                target.style.left = `${next.x}px`; target.style.top = `${next.y}px`;
+            };
             const cleanup = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', finish); window.removeEventListener('pointercancel', finish); window.removeEventListener('blur', finish); };
-            const finish = e => { if (e?.pointerId !== undefined && e.pointerId !== pointerId) return; cleanup(); const now = target.getBoundingClientRect(); settings[key] = { x: now.left, y: now.top }; save(); if (clickGuard && moved) { target.dataset.dragged = '1'; setTimeout(() => target.dataset.dragged = '0'); } };
+            const finish = e => {
+                if (e?.pointerId !== undefined && e.pointerId !== pointerId) return;
+                cleanup(); delete target.dataset.coDragging;
+                const now = target.getBoundingClientRect(); const next = clampFloatingCoordinates(now.left, now.top, now.width, now.height, key);
+                target.style.left = `${next.x}px`; target.style.top = `${next.y}px`; settings[key] = { x: next.x, y: next.y }; save();
+                if (clickGuard && moved) { target.dataset.dragged = '1'; setTimeout(() => target.dataset.dragged = '0'); }
+            };
             window.addEventListener('pointermove', move); window.addEventListener('pointerup', finish); window.addEventListener('pointercancel', finish); window.addEventListener('blur', finish);
         });
     }
+    function floatingViewportBounds(key) {
+        const viewport = globalThis.visualViewport;
+        const left = Number(viewport?.offsetLeft) || 0;
+        const top = Number(viewport?.offsetTop) || 0;
+        const width = Number(viewport?.width) || innerWidth || document.documentElement.clientWidth;
+        const height = Number(viewport?.height) || innerHeight || document.documentElement.clientHeight;
+        const compact = width <= 650 || navigator.maxTouchPoints > 0;
+        const sideMargin = key === 'fab' ? (compact ? 12 : 8) : (compact ? 8 : 6);
+        const topMargin = key === 'fab' ? (compact ? 12 : 8) : (compact ? 8 : 6);
+        const bottomMargin = key === 'fab' ? (compact ? 36 : 8) : (compact ? 12 : 6);
+        return { left: left + sideMargin, top: top + topMargin, right: left + width - sideMargin, bottom: top + height - bottomMargin, width, height };
+    }
+    function clampFloatingCoordinates(x, y, width, height, key) {
+        const bounds = floatingViewportBounds(key);
+        const safeWidth = Math.max(1, Math.min(Number(width) || (key === 'fab' ? 56 : 430), bounds.width));
+        const safeHeight = Math.max(1, Math.min(Number(height) || (key === 'fab' ? 56 : 640), bounds.height));
+        return {
+            x: Math.max(bounds.left, Math.min(Math.max(bounds.left, bounds.right - safeWidth), Number(x) || bounds.left)),
+            y: Math.max(bounds.top, Math.min(Math.max(bounds.top, bounds.bottom - safeHeight), Number(y) || bounds.top)),
+        };
+    }
     makeDraggable(root.querySelector('#co-fab'), root.querySelector('#co-fab'), 'fab', true);
     makeDraggable(root.querySelector('#co-head'), root.querySelector('#co-panel'), 'panel');
-    function restoreVisiblePosition(key, selector) {
-        const pos = settings[key]; if (!Number.isFinite(pos?.x) || !Number.isFinite(pos?.y)) return;
+    function restoreVisiblePosition(key, selector, reason = 'startup') {
         const el = root.querySelector(selector); if (!el) return;
-        const width = el.offsetWidth || (key === 'fab' ? 56 : Math.min(430, innerWidth));
-        const height = el.offsetHeight || (key === 'fab' ? 56 : Math.min(640, innerHeight));
-        const x = Math.max(0, Math.min(Math.max(0, innerWidth - Math.min(width, innerWidth)), pos.x));
-        const y = Math.max(0, Math.min(Math.max(0, innerHeight - Math.min(height, innerHeight)), pos.y));
-        el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${x}px`; el.style.top = `${y}px`;
-        if (x !== pos.x || y !== pos.y) {
-            settings[key] = { x, y }; save();
-            bootTrace('position-clamped', { key, fromX: pos.x, fromY: pos.y, toX: x, toY: y, viewport: `${innerWidth}x${innerHeight}` });
+        if (el.dataset.coDragging === '1') return;
+        const rect = el.getBoundingClientRect(); const pos = settings[key];
+        const hasStored = Number.isFinite(pos?.x) && Number.isFinite(pos?.y);
+        if (!hasStored && !['absolute', 'fixed'].includes(getComputedStyle(el).position)) return;
+        if (!hasStored && (!rect.width || !rect.height)) return;
+        const fromX = hasStored ? pos.x : rect.left; const fromY = hasStored ? pos.y : rect.top;
+        const width = rect.width || el.offsetWidth || (key === 'fab' ? 56 : Math.min(430, floatingViewportBounds(key).width));
+        const height = rect.height || el.offsetHeight || (key === 'fab' ? 56 : Math.min(640, floatingViewportBounds(key).height));
+        const next = clampFloatingCoordinates(fromX, fromY, width, height, key);
+        el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.left = `${next.x}px`; el.style.top = `${next.y}px`;
+        if (!hasStored || next.x !== pos.x || next.y !== pos.y) {
+            settings[key] = { x: next.x, y: next.y }; save();
+            bootTrace('position-clamped', { key, reason, fromX, fromY, toX: next.x, toY: next.y, viewport: `${floatingViewportBounds(key).width}x${floatingViewportBounds(key).height}` });
         }
     }
-    for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) restoreVisiblePosition(key, selector);
+    let floatingClampFrame = 0;
+    function clampFloatingUi(reason = 'viewport-change') {
+        for (const [key, selector] of [['fab', '#co-fab'], ['panel', '#co-panel']]) restoreVisiblePosition(key, selector, reason);
+    }
+    function scheduleFloatingUiClamp(reason = 'viewport-change') {
+        cancelAnimationFrame(floatingClampFrame);
+        floatingClampFrame = requestAnimationFrame(() => { floatingClampFrame = 0; clampFloatingUi(reason); });
+    }
+    clampFloatingUi('startup');
+    requestAnimationFrame(() => clampFloatingUi('first-paint'));
+    setTimeout(() => clampFloatingUi('viewport-settled-250ms'), 250);
+    setTimeout(() => clampFloatingUi('viewport-settled-1000ms'), 1000);
+    addEventListener('resize', () => scheduleFloatingUiClamp('window-resize'), { passive: true });
+    addEventListener('orientationchange', () => { scheduleFloatingUiClamp('orientation-change'); setTimeout(() => clampFloatingUi('orientation-settled'), 350); }, { passive: true });
+    globalThis.visualViewport?.addEventListener('resize', () => scheduleFloatingUiClamp('visual-viewport-resize'), { passive: true });
     renderRegexList(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
     initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });

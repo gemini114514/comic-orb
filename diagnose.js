@@ -1,5 +1,5 @@
 const DOCTOR_VERSION = '1.0.0';
-const EXTENSION_VERSION = '1.25.13';
+const EXTENSION_VERSION = '1.25.14';
 const SETTINGS_KEY = 'comic-orb.settings.v1';
 const TRACE_KEY = 'comic-orb.doctor.trace.v1';
 const EVENTS_KEY = 'comic-orb.doctor.events.v1';
