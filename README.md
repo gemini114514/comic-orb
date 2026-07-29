@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.25.15/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.25.16/diagnose.js');
 await doctor.download();
 ```
 
@@ -98,6 +98,8 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 - 单独填写测试提示词；
 - 保存提示词预设；
 - 配置额外请求头和请求体。
+
+绘画设置中的“应用 Google 官方分辨率限制”默认启用。使用 Gemini 3.1 Flash/Lite Image、Gemini 3 Pro Image 或 Gemini 2.5 Flash Image 时，漫画球会按用户输入的宽高比例自动选择最接近的官方比例与合法分辨率档位；OpenAI 兼容 Generations、带参考图的 Edits 和 Gemini 原生协议都会应用，并在界面和本地日志中显示规范结果。非 Gemini 图片模型不会被修改。
 
 分镜预设内置两档 Gemini 适配：“少年漫软适配（表现力最大）”尽量保留战斗与关系张力；“少年漫安全适配（成功率优先）”会把人形或大型变异敌人的直接头颈/身体命中特写、生物性污渍与解剖化感染环境转换为攻击轨迹、外层甲壳崩解、烟尘遮挡、环境碰撞、完整轮廓结果和非解剖化污染结构。普通蘑菇、菌林、孢子景观与非解剖化菌类怪物不会仅因题材名称被过滤。升级不会自动切换现有选择，可按题材自行选用。
 

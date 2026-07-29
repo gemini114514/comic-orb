@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.25.15';
+    const COMIC_ORB_VERSION = '1.25.16';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -446,7 +446,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             modelsPath: '/v1/models',
             testPrompt: DEFAULT_DRAWING_TEST_PROMPT,
             promptPrefix: '绘制一页完成度高、构图清晰的漫画。', extraBody: '{}', extraHeaders: '{}', temporarySession: true, sendReferences: true,
-            quality: '', outputFormat: '', outputCompression: '', background: '', inputFidelity: '', useLocalProxy: true, requestTimeoutSeconds: 600
+            quality: '', outputFormat: '', outputCompression: '', background: '', inputFidelity: '', useLocalProxy: true, requestTimeoutSeconds: 600,
+            enforceGoogleOfficialResolution: true
         },
         apiProfiles: { adaptation: [], storyboard: [], drawing: [] },
         activeApiProfile: { adaptation: '', storyboard: '', drawing: '' },
@@ -2521,6 +2522,121 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const divisor = gcd(a, b); a /= divisor; b /= divisor;
         return `${a}:${b}`;
     }
+    const GOOGLE_IMAGE_RESOLUTIONS = Object.freeze({
+        flash31: {
+            tiers: ['512', '1K', '2K', '4K'],
+            sizes: {
+                '1:1': ['512x512', '1024x1024', '2048x2048', '4096x4096'],
+                '1:4': ['256x1024', '512x2048', '1024x4096', '2048x8192'],
+                '1:8': ['192x1536', '384x3072', '768x6144', '1536x12288'],
+                '2:3': ['424x632', '848x1264', '1696x2528', '3392x5056'],
+                '3:2': ['632x424', '1264x848', '2528x1696', '5056x3392'],
+                '3:4': ['448x600', '896x1200', '1792x2400', '3584x4800'],
+                '4:1': ['1024x256', '2048x512', '4096x1024', '8192x2048'],
+                '4:3': ['600x448', '1200x896', '2400x1792', '4800x3584'],
+                '4:5': ['464x576', '928x1152', '1856x2304', '3712x4608'],
+                '5:4': ['576x464', '1152x928', '2304x1856', '4608x3712'],
+                '8:1': ['1536x192', '3072x384', '6144x768', '12288x1536'],
+                '9:16': ['384x688', '768x1376', '1536x2752', '3072x5504'],
+                '16:9': ['688x384', '1376x768', '2752x1536', '5504x3072'],
+                '21:9': ['792x336', '1584x672', '3168x1344', '6336x2688'],
+            },
+        },
+        pro3: {
+            tiers: ['1K', '2K', '4K'],
+            sizes: {
+                '1:1': ['1024x1024', '2048x2048', '4096x4096'],
+                '2:3': ['848x1264', '1696x2528', '3392x5056'],
+                '3:2': ['1264x848', '2528x1696', '5056x3392'],
+                '3:4': ['896x1200', '1792x2400', '3584x4800'],
+                '4:3': ['1200x896', '2400x1792', '4800x3584'],
+                '4:5': ['928x1152', '1856x2304', '3712x4608'],
+                '5:4': ['1152x928', '2304x1856', '4608x3712'],
+                '9:16': ['768x1376', '1536x2752', '3072x5504'],
+                '16:9': ['1376x768', '2752x1536', '5504x3072'],
+                '21:9': ['1584x672', '3168x1344', '6336x2688'],
+            },
+        },
+        lite31: {
+            tiers: ['1K'],
+            sizes: {
+                '1:1': ['1024x1024'], '2:3': ['848x1264'], '3:2': ['1264x848'],
+                '3:4': ['896x1200'], '4:3': ['1200x896'], '4:5': ['928x1152'],
+                '5:4': ['1152x928'], '9:16': ['768x1376'], '16:9': ['1376x768'],
+                '21:9': ['1584x672'],
+            },
+        },
+        flash25: {
+            tiers: ['1K'],
+            sizes: {
+                '1:1': ['1024x1024'], '2:3': ['832x1248'], '3:2': ['1248x832'],
+                '3:4': ['864x1184'], '4:3': ['1184x864'], '4:5': ['896x1152'],
+                '5:4': ['1152x896'], '9:16': ['768x1344'], '16:9': ['1344x768'],
+                '21:9': ['1536x672'],
+            },
+        },
+    });
+    function googleImageResolutionFamily(model) {
+        const value = String(model || '').toLowerCase();
+        if (/gemini[-_. ]?3\.1[-_. ]?flash[-_. ]?lite[-_. ]?image/.test(value)) return 'lite31';
+        if (/gemini[-_. ]?3\.1[-_. ]?flash[-_. ]?image/.test(value)) return 'flash31';
+        if (/gemini[-_. ]?3(?:\.\d+)?[-_. ]?pro[-_. ]?image/.test(value)) return 'pro3';
+        if (/gemini[-_. ]?2\.5[-_. ]?flash.*image/.test(value)) return 'flash25';
+        return '';
+    }
+    function parsePixelSize(value) {
+        const match = String(value || '').match(/^\s*(\d+)\s*x\s*(\d+)\s*$/i);
+        if (!match) return null;
+        const width = Number(match[1]); const height = Number(match[2]);
+        return width > 0 && height > 0 ? { width, height } : null;
+    }
+    function ratioNumber(value) {
+        const [width, height] = String(value).split(':').map(Number);
+        return width > 0 && height > 0 ? width / height : 1;
+    }
+    const GOOGLE_OPENAI_COMPATIBLE_RATIOS = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9']);
+    function resolveGoogleDrawingResolution(conf, protocol = 'native') {
+        const inputSize = String(conf?.size || '').trim();
+        const family = googleImageResolutionFamily(conf?.model);
+        const enabled = conf?.enforceGoogleOfficialResolution !== false;
+        if (!enabled || !family) return { applied: false, changed: false, inputSize, size: inputSize, aspectRatio: sizeToAspectRatio(inputSize), imageSize: '', family };
+        const table = GOOGLE_IMAGE_RESOLUTIONS[family];
+        const parsed = parsePixelSize(inputSize) || { width: 1024, height: 1024 };
+        const inputRatio = parsed.width / parsed.height;
+        const availableRatios = Object.keys(table.sizes).filter(ratio => protocol !== 'openai' || GOOGLE_OPENAI_COMPATIBLE_RATIOS.has(ratio));
+        const aspectRatio = availableRatios.reduce((best, candidate) =>
+            Math.abs(Math.log(inputRatio / ratioNumber(candidate))) < Math.abs(Math.log(inputRatio / ratioNumber(best))) ? candidate : best);
+        const candidates = table.sizes[aspectRatio];
+        const inputArea = parsed.width * parsed.height;
+        const firstTierIndex = protocol === 'openai' && family === 'flash31' ? 1 : 0;
+        let tierIndex = firstTierIndex;
+        for (let index = firstTierIndex + 1; index < candidates.length; index += 1) {
+            const current = parsePixelSize(candidates[index]); const best = parsePixelSize(candidates[tierIndex]);
+            if (Math.abs(Math.log((current.width * current.height) / inputArea)) < Math.abs(Math.log((best.width * best.height) / inputArea))) tierIndex = index;
+        }
+        const size = candidates[tierIndex];
+        return {
+            applied: true, changed: size.toLowerCase() !== inputSize.toLowerCase(), inputSize,
+            size, aspectRatio, imageSize: table.tiers[tierIndex], family,
+        };
+    }
+    function googleOpenAIEditTransportSize(resolution) {
+        if (!resolution.applied) return resolution.size;
+        const [ratioWidth, ratioHeight] = resolution.aspectRatio.split(':').map(Number);
+        const maxRatioSide = Math.max(ratioWidth, ratioHeight);
+        const targetMaxSide = resolution.imageSize === '4K' ? 5999 : resolution.imageSize === '2K' ? 2999 : 1499;
+        const factor = Math.max(1, Math.floor(targetMaxSide / maxRatioSide));
+        return `${ratioWidth * factor}x${ratioHeight * factor}`;
+    }
+    function logGoogleDrawingResolution(resolution, conf, operation) {
+        if (!resolution.applied) return;
+        queueLog('operation', '应用 Google 官方分辨率限制', {
+            operation, model: String(conf.model || ''), inputSize: resolution.inputSize || '未填写',
+            outputSize: resolution.size, aspectRatio: resolution.aspectRatio, imageSize: resolution.imageSize,
+            ...(resolution.transportSize ? { openAITransportSize: resolution.transportSize } : {}),
+            result: resolution.changed ? `${resolution.inputSize || '空值'} → ${resolution.size}` : `保持 ${resolution.size}`,
+        });
+    }
     function geminiInlinePart(ref) {
         const match = String(ref.dataUrl || '').match(/^data:([^;,]+);base64,(.+)$/s);
         if (!match) throw new Error(`参考图“${ref.name || '未命名'}”不是有效的 base64 Data URL`);
@@ -2567,15 +2683,21 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return options.withTiming ? result : result.image;
     }
     async function callDrawingEdits(conf, finalPrompt, activeRefs, options = {}) {
-        const extras = apiExtras(conf); const fields = { model: conf.model, prompt: finalPrompt, ...(String(conf.size || '').trim() ? { size: conf.size } : {}), n: 1, ...imageApiOptions(conf, true), ...extras };
+        const extras = apiExtras(conf); const resolution = resolveGoogleDrawingResolution(conf, 'openai');
+        const transportSize = googleOpenAIEditTransportSize(resolution);
+        if (resolution.applied) resolution.transportSize = transportSize;
+        const fields = { model: conf.model, prompt: finalPrompt, ...(String(transportSize || '').trim() ? { size: transportSize } : {}), n: 1, ...imageApiOptions(conf, true), ...extras };
+        if (resolution.applied) fields.size = transportSize;
+        logGoogleDrawingResolution(resolution, conf, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits）`);
         const requestRefs = options.test ? [{ dataUrl: makeTestImage(), name: 'api-test.png' }] : activeRefs;
         if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'edits', fields, requestRefs, options);
         const form = new FormData(); form.append('model', conf.model); form.append('prompt', finalPrompt);
-        if (String(conf.size || '').trim()) form.append('size', conf.size);
+        if (String(transportSize || '').trim()) form.append('size', transportSize);
         form.append('n', '1');
         if (options.test) form.append('image[]', dataUrlToBlob(makeTestImage()), 'api-test.png');
         else activeRefs.forEach((ref, i) => form.append('image[]', dataUrlToBlob(ref.dataUrl), ref.name || `reference-${i + 1}.png`));
         const optional = { ...imageApiOptions(conf, true), ...extras };
+        if (resolution.applied) delete optional.size;
         for (const [key, value] of Object.entries(optional)) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
         const data = await apiFetch(drawingEndpoint(conf, 'edits'), { method: 'POST', headers: apiHeaders(conf, true), body: form, signal: options.signal }, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits，${activeRefs.length} 张参考图）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
@@ -2611,17 +2733,20 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         if (conf.mode === 'gemini') {
             const extras = apiExtras(conf); const customGeneration = extras.generationConfig || {};
-            const aspectRatio = sizeToAspectRatio(conf.size);
+            const resolution = resolveGoogleDrawingResolution(conf, 'native');
+            const aspectRatio = resolution.aspectRatio || sizeToAspectRatio(conf.size);
             const parts = [{ text: finalPrompt }, ...activeRefs.map(geminiInlinePart)];
+            const imageConfig = { ...(customGeneration.imageConfig || {}), ...(aspectRatio ? { aspectRatio } : {}), ...(resolution.applied && resolution.imageSize ? { imageSize: resolution.imageSize } : {}) };
             const body = {
                 contents: [{ role: 'user', parts }],
                 ...extras,
                 generationConfig: {
                     responseModalities: ['TEXT', 'IMAGE'],
-                    ...(aspectRatio ? { imageConfig: { aspectRatio } } : {}),
                     ...customGeneration,
+                    ...(Object.keys(imageConfig).length ? { imageConfig } : {}),
                 },
             };
+            logGoogleDrawingResolution(resolution, conf, options.test ? '绘画 API 测试（Gemini 原生）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Gemini 原生）`);
             const endpoint = drawingEndpoint(conf, 'gemini');
             const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Gemini 原生）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Gemini 原生，${activeRefs.length} 张参考图）`, validateDrawingPayload);
             return drawingResult(data, conf, finalPrompt, options);
@@ -2632,7 +2757,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         // 向后兼容原来的 images 值：有参考图时自动切换为实测兼容的 multipart image[] Edits 协议。
         if (activeRefs.length) return callDrawingEdits(conf, finalPrompt, activeRefs, options);
-        const body = { model: conf.model, prompt: finalPrompt, n: 1, ...(String(conf.size || '').trim() ? { size: conf.size } : {}), ...imageApiOptions(conf), ...apiExtras(conf) };
+        const resolution = resolveGoogleDrawingResolution(conf, 'openai');
+        const body = { model: conf.model, prompt: finalPrompt, n: 1, ...(String(resolution.size || '').trim() ? { size: resolution.size } : {}), ...imageApiOptions(conf), ...apiExtras(conf) };
+        if (resolution.applied) {
+            body.size = resolution.size;
+            body.imageConfig = { ...(body.imageConfig && typeof body.imageConfig === 'object' ? body.imageConfig : {}), aspectRatio: resolution.aspectRatio, imageSize: resolution.imageSize };
+        }
+        logGoogleDrawingResolution(resolution, conf, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`);
         if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'generations', body, [], options);
         const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
@@ -3207,6 +3338,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="dr-temporary" type="checkbox" ${settings.drawing.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
             <label class="co-field"><span>调用模式</span><select id="dr-mode"><option value="images">OpenAI 自动（推荐）</option><option value="edits">强制 Edits multipart</option><option value="chat">Chat 多模态</option><option value="gemini">Gemini 原生 generateContent</option></select></label>
             <label class="co-field"><span>尺寸</span><input id="dr-size" value="${esc(settings.drawing.size)}"></label>
+            <label class="co-check co-full" title="仅匹配 Gemini 图片模型。按输入尺寸选择最接近的 Google 官方宽高比与分辨率档位；OpenAI Edits、Generations 和 Gemini 原生请求都会应用。"><input id="dr-google-resolution-limit" type="checkbox" ${settings.drawing.enforceGoogleOfficialResolution !== false ? 'checked' : ''}>应用 Google 官方分辨率限制（默认启用）</label>
+            <div class="co-callout co-full" id="dr-google-resolution-hint">正在计算实际发送分辨率…</div>
             <label class="co-field"><span>GPT Image 质量</span><select id="dr-quality"><option value="">不发送（服务默认）</option><option value="auto">auto</option><option value="low">low（速度优先）</option><option value="medium">medium</option><option value="high">high</option></select></label>
             <label class="co-field"><span>输出格式</span><select id="dr-output-format"><option value="">不发送（服务默认）</option><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></label>
             <label class="co-field"><span>输出压缩 0-100</span><input id="dr-output-compression" type="number" min="0" max="100" step="1" value="${esc(settings.drawing.outputCompression)}" placeholder="留空不发送"></label>
@@ -3380,6 +3513,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             set('output-compression', conf.outputCompression); set('background', conf.background); set('input-fidelity', conf.inputFidelity);
             set('timeout', conf.requestTimeoutSeconds || 600); set('prefix', conf.promptPrefix);
             root.querySelector('#dr-sendrefs').checked = Boolean(conf.sendReferences); root.querySelector('#dr-local-proxy').checked = conf.useLocalProxy !== false;
+            root.querySelector('#dr-google-resolution-limit').checked = conf.enforceGoogleOfficialResolution !== false;
+            renderGoogleResolutionHint();
         }
         renderApiProfileManager(kind); renderPromptPresetManager(kind);
     }
@@ -3607,12 +3742,23 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.storage.autoCleanup = checked('co-cache-auto-cleanup');
         settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary'), storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(val('ad-storyboard-interval')) };
         settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
-        settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs') };
+        settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs'), enforceGoogleOfficialResolution: checked('dr-google-resolution-limit') };
         save();
     }
     function val(id) { return root.querySelector(`#${id}`)?.value ?? ''; }
     function checked(id) { return Boolean(root.querySelector(`#${id}`)?.checked); }
     function setStatus(text, type = '') { const el = root.querySelector('#co-status'); el.textContent = text; el.className = `co-status ${type}`; }
+    function renderGoogleResolutionHint() {
+        const hint = root.querySelector('#dr-google-resolution-hint'); if (!hint) return;
+        const conf = {
+            ...settings.drawing, model: val('dr-model'), size: val('dr-size'),
+            enforceGoogleOfficialResolution: checked('dr-google-resolution-limit'),
+        };
+        const resolution = resolveGoogleDrawingResolution(conf, val('dr-mode') === 'gemini' ? 'native' : 'openai');
+        if (!conf.enforceGoogleOfficialResolution) { hint.textContent = 'Google 官方分辨率限制已关闭：尺寸将按输入值原样发送。'; return; }
+        if (!resolution.family) { hint.textContent = '当前模型未识别为受支持的 Gemini 图片模型，不修改输入尺寸。'; return; }
+        hint.textContent = `规范结果：${resolution.size} · 宽高比 ${resolution.aspectRatio} · Google ${resolution.imageSize} 档${resolution.changed ? `（输入 ${resolution.inputSize || '空值'} 已转换）` : ''}`;
+    }
     function renderAutoRetrySettings() {
         const enabled = checked('co-auto-retry-enabled');
         const mode = val('co-auto-retry-mode') === 'full' ? 'full' : 'limited';
@@ -4125,6 +4271,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelectorAll('#co-full-setup-dialog .co-dialog-tabs button').forEach(button => button.addEventListener('click', () => switchFullSetupPage(button.dataset.setupPage)));
     root.querySelectorAll('#co-full-setup-dialog .co-copy-setup').forEach(button => button.addEventListener('click', () => copyFullSetupInstruction(button.dataset.copyKind).catch(error => notify(`复制失败：${error.message}`, 'error'))));
     root.querySelector('#dr-local-proxy').addEventListener('change', () => { syncSettingsFromUi(); void checkLocalProxyStatus(); });
+    for (const id of ['dr-model', 'dr-size', 'dr-google-resolution-limit']) {
+        root.querySelector(`#${id}`).addEventListener(id === 'dr-size' ? 'input' : 'change', () => {
+            renderGoogleResolutionHint();
+            syncSettingsFromUi();
+        });
+    }
     root.querySelector('#dr-speed-preset').addEventListener('click', () => {
         root.querySelector('#dr-quality').value = 'low'; root.querySelector('#dr-output-format').value = 'jpeg';
         root.querySelector('#dr-output-compression').value = '80'; root.querySelector('#dr-background').value = 'opaque'; root.querySelector('#dr-input-fidelity').value = 'low';
