@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.25.16';
+    const COMIC_ORB_VERSION = '1.26.0';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -53,6 +53,18 @@
 
 只输出一个 JSON 对象，不要 Markdown、代码围栏、解释或注释。严格结构：
 {"format":"comic-orb-regex-list","version":1,"rules":[{"enabled":true,"pattern":"JavaScript 正则字符串","flags":"gim","replacement":""}]}`;
+    const DEFAULT_CHARACTER_ASSISTANT_GUIDE = `你是漫画改编的人物资料整理员。阅读用户提供的“已经执行漫画球剧情正则后的楼层正文”，整理其中明确出现的人物，输出可由用户继续编辑的人设卡 JSON。
+
+规则：
+1. 只整理输入正文明确建立的事实，不使用作品百科、模型记忆、姓名联想或常见二次元形象补全。
+2. 每个人物一张卡。name 使用正文最稳定的称呼；aliases 只收录正文明确出现的别名、代号或不同译名。
+3. description 用紧凑自然语言整合：身份/种族、发色发型、瞳色肤色、体型轮廓、稳定服装、常驻装备、辨识特征、稳定性格与说话方式。原文没写的项目省略。
+4. 区分稳定人设与临时状态。一次性伤势、表情、动作、污渍、地点和剧情事件不要写成永久外貌；明确换装可简短注明适用阶段。
+5. 原文内部存在矛盾时，不要自行猜真相；在 description 末尾写“待人工确认：……”并列出冲突说法。
+6. 不续写剧情，不新增人物，不输出镜头、构图、画风、年龄推断或评价。
+7. 只输出一个 JSON 对象，不要 Markdown 代码块或解释：
+
+{"format":"comic-orb-character-cards","version":1,"cards":[{"name":"人物主名","aliases":["别名"],"description":"只含正文明确事实的紧凑人设描述"}]}`;
     const LEGACY_STORYBOARD_SYSTEM_PROMPT = '你是专业漫画分镜师。把剧情改写成一张漫画页的精确绘画提示词。明确画幅、分格、镜头、人物外观与位置、动作表情、场景、光影、对白框文字，并保持角色一致性。只输出可直接交给绘画模型的最终提示词，不要解释。';
     const LEGACY_STORYBOARD_TEST_PROMPT = '测试剧情：雨夜的车站里，少女发现远处站台有一个熟悉的人影。请把这段剧情整理成简洁、可直接用于绘画的漫画分镜提示词，并明确镜头、构图、人物动作和表情。';
     const DEFAULT_STORYBOARD_SYSTEM_PROMPT = `你是专业漫画分镜主笔。先精炼剧情并整理必要的静态视觉连续性，但不得续写输入范围之外的剧情事件，再输出可被程序解析并按页并发绘制的严格 JSON。只输出一个 JSON 对象，禁止 Markdown、代码块、解释、注释或 JSON 外文字。
@@ -403,7 +415,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const style = document.createElement('link');
         style.id = STYLE_ID;
         style.rel = 'stylesheet';
-        style.href = new URL('./style.css?v=20260725-mobile-model-scroll-1', import.meta.url).href;
+        style.href = new URL('./style.css?v=20260731-character-cards-1', import.meta.url).href;
         style.addEventListener('load', () => { bootTrace('style-loaded', { href: style.href }); scheduleFloatingUiClamp('style-loaded'); }, { once: true });
         style.addEventListener('error', () => bootTrace('style-load-error', { href: style.href }), { once: true });
         document.head.appendChild(style);
@@ -424,6 +436,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         regexRules: '',
         regexList: [],
         regexAssistantGuide: DEFAULT_REGEX_ASSISTANT_GUIDE,
+        characterAssistantGuide: DEFAULT_CHARACTER_ASSISTANT_GUIDE,
+        characterCardsByChat: {},
         storyboard: {
             baseUrl: 'https://api.openai.com', path: '/v1/chat/completions', apiKey: '', model: 'gpt-4.1-mini', temperature: 0.4,
             modelsPath: '/v1/models',
@@ -479,6 +493,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     settings.autoRetry = normalizeAutoRetry(settings.autoRetry);
     settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(settings.storage.cachePreviewLimit);
     settings.storage.maxCacheMb = normalizeMaxCacheMb(settings.storage.maxCacheMb);
+    settings.characterAssistantGuide = String(settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE);
+    settings.characterCardsByChat = normalizeCharacterCardsByChat(settings.characterCardsByChat);
     if (settings.storyboard.systemPrompt === LEGACY_STORYBOARD_SYSTEM_PROMPT) settings.storyboard.systemPrompt = DEFAULT_STORYBOARD_SYSTEM_PROMPT;
     if (settings.storyboard.testPrompt === LEGACY_STORYBOARD_TEST_PROMPT) settings.storyboard.testPrompt = DEFAULT_STORYBOARD_TEST_PROMPT;
     settings.storyboard.systemPrompt = upgradeStoryboardClosedWorld(settings.storyboard.systemPrompt);
@@ -573,6 +589,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let cacheReaderRenderToken = 0;
     let imageCacheQueue = Promise.resolve();
     let pendingAiRegexRules = [];
+    let renderedCharacterChatKey = '';
+    let renderingCharacterCards = false;
     let serverPluginProbe = { checkedAt: 0, ready: false, data: null, error: '' };
     let comicMediaObserver = null;
     let comicMediaDecorationQueued = false;
@@ -1021,7 +1039,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return lastApiTiming;
     }
     function isModelApiOperation(operation) {
-        return /^(?:分镜生成|分镜 API 测试|剧情演绎|演绎 API 测试|绘画生成|绘画 API 测试)/.test(String(operation || ''));
+        return /^(?:分镜生成|分镜 API 测试|剧情演绎|演绎 API 测试|绘画生成|绘画 API 测试|AI 正则助手|AI 人设整理)/.test(String(operation || ''));
     }
     async function apiFetch(url, options, operation = 'API 请求', validateResponse = null, retryOptions = settings.autoRetry) {
         const captureModelIo = settings.debug.captureModelIo !== false && isModelApiOperation(operation);
@@ -1064,7 +1082,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 error.apiLogged = true; throw error;
             }
             if (!data) throw new Error('API 返回的不是 JSON');
-            if (captureModelIo && /^(?:分镜生成|分镜 API 测试|剧情演绎|演绎 API 测试)/.test(String(operation || ''))) {
+            if (captureModelIo && /^(?:分镜生成|分镜 API 测试|剧情演绎|演绎 API 测试|AI 正则助手|AI 人设整理)/.test(String(operation || ''))) {
                 const reasoning = extractApiReasoningText(data);
                 const choice = data?.choices?.[0] || data?.data?.choices?.[0] || {};
                 lastModelReasoning = reasoning || `本次${operation}响应没有公开 reasoning_content。finish_reason/status：${choice?.finish_reason || choice?.stop_reason || data?.status || '未提供'}。这通常表示深度思考已关闭、模型不公开思维链，或中转没有转发该字段。`;
@@ -1362,6 +1380,78 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             floors.push(i);
         }
         return { text: applyRegexRules(chunks.join('\n\n'), options.regexList), floors, skippedUserFloors };
+    }
+    function normalizeCharacterCard(value = {}) {
+        const name = String(value?.name || '').trim();
+        const aliases = Array.isArray(value?.aliases)
+            ? value.aliases.map(item => String(item || '').trim()).filter(Boolean)
+            : String(value?.aliases || '').split(/[,，、\n]/).map(item => item.trim()).filter(Boolean);
+        return {
+            id: String(value?.id || newId()),
+            name,
+            aliases: [...new Set(aliases.filter(alias => alias !== name))],
+            description: String(value?.description || '').trim(),
+            source: value?.source === 'ai' ? 'ai' : 'manual',
+        };
+    }
+    function normalizeCharacterCards(value) {
+        if (!Array.isArray(value)) return [];
+        const cards = []; const usedIds = new Set();
+        value.slice(0, 200).forEach(item => {
+            if (!item || typeof item !== 'object') return;
+            const card = normalizeCharacterCard(item);
+            if (!card.name && !card.description) return;
+            if (usedIds.has(card.id)) card.id = newId();
+            usedIds.add(card.id); cards.push(card);
+        });
+        return cards;
+    }
+    function normalizeCharacterCardsByChat(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+        const normalized = {};
+        for (const [key, collection] of Object.entries(value)) {
+            if (['__proto__', 'prototype', 'constructor'].includes(key) || !collection || typeof collection !== 'object') continue;
+            normalized[key] = {
+                sendMode: collection.sendMode === 'override' ? 'override' : 'off',
+                cards: normalizeCharacterCards(collection.cards),
+                updatedAt: String(collection.updatedAt || ''),
+            };
+        }
+        return normalized;
+    }
+    function characterChatKey(ctx = context()) {
+        return currentChatId(ctx) || `chat-name:${String(ctx.name2 || 'current-character')}`;
+    }
+    function characterCollectionForChat(ctx = context(), create = true) {
+        const key = characterChatKey(ctx);
+        let collection = settings.characterCardsByChat[key];
+        if (!collection && create) {
+            collection = { sendMode: 'off', cards: [], updatedAt: new Date().toISOString() };
+            settings.characterCardsByChat[key] = collection;
+        }
+        return { key, collection: collection || { sendMode: 'off', cards: [], updatedAt: '' } };
+    }
+    function characterCardsForText(cards, text) {
+        const source = String(text || '');
+        const foldedSource = source.toLocaleLowerCase();
+        const normalized = normalizeCharacterCards(cards);
+        const matched = normalized.filter(card => [card.name, ...card.aliases].some(name => name && foldedSource.includes(String(name).toLocaleLowerCase())));
+        return matched.length ? matched : [];
+    }
+    function characterCardsOverrideBlock(cards, target = 'narrative') {
+        const normalized = normalizeCharacterCards(cards).filter(card => card.name && card.description);
+        if (!normalized.length) return '';
+        const payload = normalized.map(({ name, aliases, description }) => ({ name, aliases, description }));
+        const targetRule = target === 'drawing'
+            ? '只对本页实际出现的人物应用。人物名称、别名、稳定外貌、服装和装备与分镜文字冲突时，以本卡为准；不得为了套用人设卡新增本页没有的人物。'
+            : target === 'adaptation'
+                ? '这些是用户人工确认的人设覆盖，不是新剧情。正文、MVU或模型常识与人设卡冲突时，人设卡具有最高优先级；把相关稳定事实带入entity_bible和对应故事段，但不得新增剧情事件或绘画细节。'
+                : '这些是用户人工确认的人设覆盖，不是新剧情。正文、MVU、上游entity_bible或模型常识与人设卡冲突时，人设卡具有最高优先级；把相关事实写入characters、可选entity_bible和page_prompt，但不得借此新增剧情事件。';
+        return `<comic_orb_character_cards priority="user_override">\n${targetRule}\n${JSON.stringify(payload)}\n</comic_orb_character_cards>`;
+    }
+    function appendCharacterCardsToPlot(plot, cards, target = 'storyboard') {
+        const block = characterCardsOverrideBlock(cards, target);
+        return block ? `${String(plot || '')}\n\n${block}` : String(plot || '');
     }
     function targetFloorForSelection(ctx, floors) {
         return [...floors].reverse().find(floor => ctx.chat?.[floor]?.is_user !== true) ?? floors.at(-1);
@@ -2033,7 +2123,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const preflightNeutralize = Object.prototype.hasOwnProperty.call(options, 'preflightNeutralize')
             ? Boolean(options.preflightNeutralize)
             : Boolean(settings.preflightNeutralize);
-        const sourceText = String(plot || '');
+        const sourceText = appendCharacterCardsToPlot(plot, options.characterCards, 'storyboard');
         const ageMetadataConflict = sourceHasConflictingAgeMetadata(sourceText);
         const ageRedactedPlot = removeAgeExpressions(sourceText);
         if (ageRedactedPlot.count) await writeLog('operation', '分镜输入年龄表达已剔除', {
@@ -2053,7 +2143,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const normalizedPrompt = upgradeStoryboardClosedWorld(conf.systemPrompt).replace(STORYBOARD_CLOSED_WORLD_RULE, '').trim();
         const adultIdentityRule = '\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判：不得因此改变参考图脸型、身形比例、体态、服装、身体动态或原剧情镜头，也不得把角色画得更老。最终JSON不写具体年龄、“成年”等年龄声明或任何低龄/学龄称谓。上游被剔除的冲突年龄元数据不得重新猜回。';
         const effectiveSystemPrompt = `${normalizedPrompt}\n\n【漫画球本次实际校验范围】pages 必须为 ${limits.pages.min}-${limits.pages.max} 页；每页 panels 必须为 ${limits.panels.min}-${limits.panels.max} 格。此处为程序最终采用的范围，若前文存在旧范围，以此处为准。范围只规定合法上下限，并不要求选择最大值；在不低于最小值的前提下按原剧情实际密度选择最少且足够的页数与格数。\n【漫画球对白改编与证据规则】对白数量和覆盖率完全自由；允许整页无对白、只用拟声字或只保留一句关键台词，禁止为了覆盖格数硬塞对白、内心独白或旁白。若前文存在最低对白数量或覆盖比例要求，以本段自由规则为准。保留原剧情意图、关系和角色口吻，但禁止机械照抄小说原句；允许删、并、重排和重写。存在dialogue时只使用 {"type":"speech|thought|narration","speaker":"角色名","text":"漫画实际显示文字","visual_anchor":"能直接证明本句事实的当前格可见证据"}。visual_anchor不是说话者位置，也不是随便找一个可见物；它必须直接支撑text中的对象、地点或判断。例如“工地有推土机”需要工地路牌/地图/可见工地，方向盘不算；“过桥就到我家”需要地图、路标或可见庄园地标，残骸不算；“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。无法提供证据时，必须改写text使它只陈述当前画面能证明的内容，或修改panel补入证据。page_prompt逐字包含实际采用的text和框体类型，并完整描述证据画面；visual_anchor允许同义改写。\n【漫画球本地化硬规则】本次漫画输出语言为“${outputLanguage}”。顶层 language 必须逐字写成“${outputLanguage}”。所有 dialogue.text、旁白、内心独白、拟声字、标牌及画内可读文字使用该语言；专有名词只保留必要原文或缩写，不得擅自切换主要语言。page_prompt必须要求绘画模型逐字照抄该语言文本，禁止把speech/thought/narration渲染成Normal、Interior thoughts等可见标签。\n【漫画球色彩硬规则】默认全彩，并让每页page_prompt重申global_style.color_script中的环境色、人物固有色和特效色。黑白服装不等于黑白画面。只有剧情明确需要回忆、冲击瞬间或主观情绪强调时，才允许指定单格临时变调；内容降级与合规转换不得改变整页或跨页色调。\n【漫画球可选实体设定】entity_bible是软约束且完全可选，不属于程序校验条件。存在跨页人物、怪物、载具或关键道具时，可简洁记录稳定身份、数量特征、相对体型、常驻装备及明确状态变化；纯景色、一次性场景或无需连续实体时可省略或留空。收到上游entity_bible时尽量沿用，不因措辞或拼写小差异重复创建实体；只把本页实际出现实体的相关锁定自然写入page_prompt，不要向景色页强行添加角色。即使entity_bible缺字段、名称拼写不统一或局部矛盾，也应凭剧情常识继续完成分镜，禁止因此拒绝输出或等待修订。\n【漫画球外貌事实保真】角色的发色、发型、瞳色、肤色、体型、服装及其他永久外貌只能来自本次输入或上游entity_bible明确给出的事实。没有提供的项目保持未指定，不得依据姓名、种族、职业、世界观或常见二次元形象自行补全。未知外貌时仍要把分镜写具体：使用角色名、身份、动作、表情、朝向、站位、互动对象、已知装备和环境关系描述，但不要添加任何未知外貌；characters对应字段允许留空或写“未指定”。\n\n${STORYBOARD_GAZE_RULE}${adultIdentityRule}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
-        const finalEffectiveSystemPrompt = `${effectiveSystemPrompt.replace('“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。', '“渣滓们退开”需要被冲击波逼退的敌群与空出的道路，驾驶者不算。')}${normalizedPrompt.includes(STORYBOARD_SAFER_MARKER) ? `\n\n${STORYBOARD_SAFER_FINAL_PASS}` : ''}`;
+        const characterOverrideRule = normalizeCharacterCards(options.characterCards).length
+            ? '\n\n【用户人设卡最高优先级】用户消息末尾的 comic_orb_character_cards 是人工确认的覆盖层，不是剧情。正文、MVU、上游 entity_bible、模型常识与它冲突时，必须采用卡内事实；未知字段保持未指定。把相关人物的稳定事实写进 characters、可选 entity_bible 与 page_prompt，但不得因此新增人物、事件或镜头。'
+            : '';
+        const finalEffectiveSystemPrompt = `${effectiveSystemPrompt.replace('“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。', '“渣滓们退开”需要被冲击波逼退的敌群与空出的道路，驾驶者不算。')}${characterOverrideRule}${normalizedPrompt.includes(STORYBOARD_SAFER_MARKER) ? `\n\n${STORYBOARD_SAFER_FINAL_PASS}` : ''}`;
         const extras = apiExtras(conf);
         const body = {
             model: conf.model,
@@ -2098,6 +2191,41 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 正则助手 · 分镜 API', validateRegexResponse);
         return extractApiResponseText(data);
     }
+    function parseCharacterCardsPayload(raw) {
+        const parsed = typeof raw === 'string' ? parseModelJson(raw, 'AI 人设整理') : raw;
+        const cards = normalizeCharacterCards(Array.isArray(parsed) ? parsed : parsed?.cards);
+        if (!cards.length) throw new Error('AI 人设整理结果没有有效 cards');
+        const missingNames = cards.map((card, index) => card.name ? '' : `第 ${index + 1} 张缺少 name`).filter(Boolean);
+        const missingDescriptions = cards.map((card, index) => card.description ? '' : `第 ${index + 1} 张缺少 description`).filter(Boolean);
+        const errors = [...missingNames, ...missingDescriptions];
+        if (errors.length) throw new Error(`AI 人设卡 JSON 无效：${errors.slice(0, 8).join('；')}`);
+        return cards.map(card => ({ ...card, source: 'ai' }));
+    }
+    async function callCharacterAssistant(sourceText, guide, options = {}) {
+        const conf = options.conf || settings.storyboard;
+        const extras = apiExtras(conf);
+        delete extras.messages;
+        if (extras.response_format?.type === 'json_schema') extras.response_format = { type: 'json_object' };
+        const body = {
+            model: conf.model,
+            temperature: Number(conf.temperature),
+            ...textReasoningBody(conf, extras),
+            ...textOutputTokenBody(conf, extras),
+            ...extras,
+            messages: [
+                { role: 'system', content: String(guide || DEFAULT_CHARACTER_ASSISTANT_GUIDE) },
+                { role: 'user', content: `以下是当前聊天所选楼层执行漫画球正则后的正文。只整理这里明确出现的人物，不使用外部知识：\n\n${String(sourceText || '')}` },
+            ],
+        };
+        const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
+        const validateCharacterResponse = value => {
+            validateTextApiPayload(value, 'AI 人设整理 ', body);
+            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseCharacterCardsPayload(extractApiResponseText(value));
+        };
+        const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 人设整理 · 分镜 API', validateCharacterResponse);
+        return extractApiResponseText(data);
+    }
     async function callAdaptation(plot, options = {}) {
         const conf = options.conf || settings.adaptation;
         const outputLanguage = normalizeOutputLanguage(options.outputLanguage || settings.outputLanguage);
@@ -2107,7 +2235,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const preflightNeutralize = Object.prototype.hasOwnProperty.call(options, 'preflightNeutralize')
             ? Boolean(options.preflightNeutralize)
             : Boolean(settings.preflightNeutralize);
-        const sourceText = String(plot || '');
+        const sourceText = appendCharacterCardsToPlot(plot, options.characterCards, 'adaptation');
         const ageMetadataConflict = sourceHasConflictingAgeMetadata(sourceText);
         const ageRedactedPlot = removeAgeExpressions(sourceText);
         if (ageRedactedPlot.count) await writeLog('operation', '演绎输入年龄表达已剔除', {
@@ -2126,7 +2254,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         });
         const systemPrompt = upgradeAdaptationClosedWorld(conf.systemPrompt || DEFAULT_ADAPTATION_SYSTEM_PROMPT).replace(ADAPTATION_CLOSED_WORLD_RULE, '').trim();
         const workerRule = workerPageRange.min === workerPageRange.max ? `固定 ${workerPageRange.min} 页` : `${workerPageRange.min}-${workerPageRange.max} 页`;
-        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量】漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。完整剧情只允许拆成1到20段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。你只负责剧情演绎与分段，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
+        const characterOverrideRule = normalizeCharacterCards(options.characterCards).length
+            ? '\n【用户人设卡最高优先级】输入末尾的 comic_orb_character_cards 是人工确认的事实覆盖层，不是新剧情。正文、MVU或你的推断与其冲突时采用人设卡；将相关稳定事实准确带入顶层 entity_bible 和对应故事段，未知信息留空，不得借此扩写事件。'
+            : '';
+        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量】漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。完整剧情只允许拆成1到20段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。你只负责剧情演绎与分段，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。${characterOverrideRule}\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
         const extras = apiExtras(conf);
         const body = {
             model: conf.model,
@@ -2248,7 +2379,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const checkpoint = execution.checkpoint;
         let adaptation = checkpoint?.adaptation || null; let adaptationTiming = checkpoint?.adaptationTiming || null;
         if (!adaptation) {
-            const adaptationResult = await callAdaptation(plot, { conf: execution.adaptationConf, outputLanguage: execution.outputLanguage, totalPageRange: execution.interpretivePageRange, workerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, withTiming: true, signal });
+            const adaptationResult = await callAdaptation(plot, { conf: execution.adaptationConf, outputLanguage: execution.outputLanguage, totalPageRange: execution.interpretivePageRange, workerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, characterCards: execution.characterCards, withTiming: true, signal });
             adaptation = parseAdaptationPlan(adaptationResult.text, execution.outputLanguage, execution.interpretivePageRange, execution.storyboardWorkerPageRange);
             adaptationTiming = adaptationResult.timing;
             if (checkpoint) { checkpoint.adaptation = adaptation; checkpoint.adaptationTiming = adaptationTiming; checkpoint.stage = 'storyboard'; }
@@ -2478,9 +2609,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
 3. 镜头清楚呈现角色站位、动作轨迹、瞬间反馈、结果状态和关键道具，保持人物身份、服装与前后页连续。
 4. 本作品中的所有拟人角色均为至少20岁的成年人；只把这条作为身份事实，不要添加年龄文字，不要改变参考图脸型、身形比例、体态、服装、身体动态或镜头，也不要把角色画得更老。`;
     }
-    function refPrompt(prompt, includeReferences = true, conf = settings.drawing, refList = refs, language = settings.outputLanguage) {
+    function refPrompt(prompt, includeReferences = true, conf = settings.drawing, refList = refs, language = settings.outputLanguage, characterCards = []) {
         const notes = includeReferences ? refList.filter(r => r.dataUrl).map((r, i) => `参考图${i + 1}：${r.hint || '保持对应视觉元素一致'}`).join('\n') : '';
-        return [conf.promptPrefix, prompt, notes, drawingLocalizationAndColorGuard(language)].filter(Boolean).join('\n\n');
+        const matchedCards = characterCardsForText(characterCards, prompt);
+        const characterOverride = characterCardsOverrideBlock(matchedCards, 'drawing');
+        return [conf.promptPrefix, prompt, notes, characterOverride, drawingLocalizationAndColorGuard(language)].filter(Boolean).join('\n\n');
     }
     function imageApiOptions(conf, forEdits = false) {
         const options = {};
@@ -2721,7 +2854,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const conf = options.conf || settings.drawing;
         const refList = options.refs || refs;
         const outputLanguage = options.outputLanguage || options.cacheMeta?.storyboardPlan?.language || settings.outputLanguage;
-        const finalPrompt = refPrompt(prompt, !options.test, conf, refList, outputLanguage);
+        const finalPrompt = refPrompt(prompt, !options.test, conf, refList, outputLanguage, options.test ? [] : options.characterCards);
         const activeRefs = conf.sendReferences && !options.test ? refList.filter(r => r.dataUrl) : [];
         if (conf.mode === 'chat') {
             const content = [{ type: 'text', text: finalPrompt }];
@@ -2795,7 +2928,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const settled = await Promise.allSettled(pendingPages.map(async (page, launchIndex) => {
             try {
                 await abortableDelay(launchIndex * staggerMs, batchController.signal);
-                const result = await callDrawing(page.page_prompt, { withTiming: true, pageNumber: page.page, pagePrompt: page.page_prompt, cacheMeta: { ...cacheMeta, storyboardPlan: plan }, outputLanguage: execution.outputLanguage || plan.language, conf: execution.drawingConf, refs: execution.refs, profile: execution.drawingProfile, signal: batchController.signal });
+                const result = await callDrawing(page.page_prompt, { withTiming: true, pageNumber: page.page, pagePrompt: page.page_prompt, cacheMeta: { ...cacheMeta, storyboardPlan: plan }, outputLanguage: execution.outputLanguage || plan.language, conf: execution.drawingConf, refs: execution.refs, characterCards: execution.characterCards, profile: execution.drawingProfile, signal: batchController.signal });
                 const retained = { page: page.page, panels: page.panels.length, image: result.image, timing: result.timing, cacheId: result.cacheId, prompt: result.prompt };
                 retainedResults.set(Number(page.page), retained);
                 await execution.persistCheckpoint?.();
@@ -3099,6 +3232,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function productionExecutionSnapshot() {
         const adaptationProfile = activeApiProfile('adaptation'); const storyboardProfile = activeApiProfile('storyboard'); const drawingProfile = activeApiProfile('drawing');
         const backendMode = settings.backendMode === 'full' ? 'full' : 'basic';
+        const characterCollection = (() => { try { return characterCollectionForChat(context(), false).collection; } catch { return { sendMode: 'off', cards: [] }; } })();
+        const characterCards = characterCollection.sendMode === 'override' ? normalizeCharacterCards(characterCollection.cards) : [];
         return {
             range: String(settings.range), includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
@@ -3108,6 +3243,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             autoRetry: clone(settings.autoRetry),
+            characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
             adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
@@ -3134,7 +3270,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         await execution.persistCheckpoint();
         try {
             ensureNotCanceled(signal); updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 准备工作流`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
-            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, storyboardLaunchIntervalMs: execution.storyboardLaunchIntervalMs, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', storyboardInterval: execution.workflowMode === 'interpretive' ? formatDuration(execution.storyboardLaunchIntervalMs) : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, mvu: job.selection.mvuMeta });
+            await writeLog('operation', '漫画生成开始', execution.debugEnabled ? { taskId: job.id, mode: execution.workflowMode, range: { start: job.start, end: job.end }, outputLanguage: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, interpretivePageRange: execution.interpretivePageRange, storyboardWorkerPageRange: execution.storyboardWorkerPageRange, storyboardLaunchIntervalMs: execution.storyboardLaunchIntervalMs, preflightNeutralize: execution.preflightNeutralize, includedFloors: job.selection.floors, skippedUserFloors: job.selection.skippedUserFloors, regexList: execution.regexList, characterCardMode: execution.characterCardMode, characterCards: execution.characterCards, mvu: job.selection.mvuMeta, processedPlot: job.selection.text, profiles: { adaptation: execution.adaptationProfile, storyboard: execution.storyboardProfile, drawing: execution.drawingProfile } } : { taskId: job.id, mode: execution.workflowMode, range: `${job.start}-${job.end}`, language: execution.outputLanguage, excludeUserFloors: execution.excludeUserFloors, totalPages: execution.workflowMode === 'interpretive' ? `${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}` : '由直接分镜设置决定', workerPages: execution.workflowMode === 'interpretive' ? execution.storyboardWorkerPageRange.spec : '不适用', storyboardInterval: execution.workflowMode === 'interpretive' ? formatDuration(execution.storyboardLaunchIntervalMs) : '不适用', preflightNeutralize: execution.preflightNeutralize, included: job.selection.floors.length, skippedUsers: job.selection.skippedUserFloors.length, rules: execution.regexList.filter(x => x.enabled !== false).length, characterCards: `${execution.characterCardMode} · ${execution.characterCards.length} 张`, mvu: job.selection.mvuMeta });
             let plan = checkpoint.plan; let storyboardTiming = checkpoint.storyboardTiming;
             if (!plan && execution.workflowMode === 'interpretive') {
                 updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 演绎 AI`, `完整剧情演绎 · 总页数 ${execution.interpretivePageRange.min}-${execution.interpretivePageRange.max}`);
@@ -3148,7 +3284,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 await execution.persistCheckpoint();
             } else if (!plan) {
                 updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 直接分镜 AI`, `范围 ${job.start}-${job.end}，目标楼层 ${job.targetFloor}`);
-                const storyboardResult = await callStoryboard(job.selection.text, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, withTiming: true, signal });
+                const storyboardResult = await callStoryboard(job.selection.text, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, characterCards: execution.characterCards, withTiming: true, signal });
                 ensureNotCanceled(signal); updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 校验分镜 JSON`, '分镜响应已返回，正在解析');
                 plan = parseStoryboardPlan(storyboardResult.text, execution.storyboardConf, execution.outputLanguage);
                 storyboardTiming = storyboardResult.timing;
@@ -3280,7 +3416,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
       <button class="co-fab" id="co-fab" title="漫画工房"><span class="co-fab-icon">✎</span><span class="co-fab-time"></span><span class="co-fab-jobs"></span></button>
       <section class="co-panel" id="co-panel">
         <header class="co-head" id="co-head"><strong>漫画工房</strong><small>剧情 → 分镜 AI → 绘画 AI → 写回楼层</small><button class="co-icon" id="co-close" title="关闭">×</button></header>
-        <nav class="co-tabs"><button class="co-tab active" data-page="make">制作</button><button class="co-tab" data-page="processes">后台进程 <span class="co-process-badge" id="co-process-badge" hidden>0</span></button><button class="co-tab" data-page="refs">参考图</button><button class="co-tab" data-page="adaptation">演绎 API</button><button class="co-tab" data-page="story">分镜 API</button><button class="co-tab" data-page="draw">绘画 API</button><button class="co-tab" data-page="settings">设置</button><button class="co-tab" data-page="cache">缓存</button><button class="co-tab" data-page="debug">日志 / 结果</button></nav>
+        <nav class="co-tabs"><button class="co-tab active" data-page="make">制作</button><button class="co-tab" data-page="processes">后台进程 <span class="co-process-badge" id="co-process-badge" hidden>0</span></button><button class="co-tab" data-page="refs">参考图</button><button class="co-tab" data-page="characters">人设</button><button class="co-tab" data-page="adaptation">演绎 API</button><button class="co-tab" data-page="story">分镜 API</button><button class="co-tab" data-page="draw">绘画 API</button><button class="co-tab" data-page="settings">设置</button><button class="co-tab" data-page="cache">缓存</button><button class="co-tab" data-page="debug">日志 / 结果</button></nav>
         <main class="co-body">
           <div class="co-page active" data-page="make"><div class="co-proxy-health co-proxy-checking" id="co-proxy-health"><strong>API 连接模式</strong><span id="co-proxy-health-text">正在读取连接模式…</span><div class="co-mode-controls"><select id="co-backend-mode" aria-label="API 连接模式"><option value="basic" ${settings.backendMode !== 'full' ? 'selected' : ''}>基础模式</option><option value="full" ${settings.backendMode === 'full' ? 'selected' : ''}>完整模式</option></select><button class="co-mini" id="co-proxy-recheck" type="button">重新检测</button><button class="co-mini co-test" id="co-full-setup" type="button">完整模式安装</button></div></div><div class="co-grid">
             <label class="co-field"><span>楼层范围（闭区间）</span><input id="co-range" placeholder="例如 10-12" value="${esc(settings.range)}"></label>
@@ -3297,6 +3433,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           </div><button class="co-run" id="co-run">生成并发分页漫画并插入末层</button><div class="co-status" id="co-status">等待开始。直接模式需配置分镜与绘画 API；演绎模式还需配置独立演绎 API。</div></div>
           <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并持久化成功检查点；即使按 F5 或关闭后重新打开页面，也会恢复为等待处理。“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的 Cancel 会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
           <div class="co-page" data-page="refs"><div class="co-callout">参考图以命名预设管理，每套最多四张图及对应提示词。参考图只发送给启用了参考图的绘画 AI，不发送给演绎或分镜 AI；图片和预设均保存在当前浏览器 IndexedDB。</div><div class="co-profile-manager co-ref-preset-manager"><div class="co-profile-top"><label class="co-field"><span>参考图预设</span><select id="co-ref-preset"></select></label><label class="co-field"><span>预设名称</span><input id="co-ref-preset-name" placeholder="例如：主角常服"></label></div><div class="co-profile-actions"><button class="co-mini" id="co-ref-preset-new" type="button">新建</button><button class="co-mini co-test" id="co-ref-preset-save" type="button">保存修改</button><button class="co-mini co-danger" id="co-ref-preset-delete" type="button">删除</button><button class="co-mini" id="co-import-refs" type="button">导入预设库</button><input id="co-import-refs-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-refs" type="button">导出预设库</button></div><div class="co-ref-preset-state" id="co-ref-preset-state">正在读取预设…</div></div><div id="co-refs"></div></div>
+          <div class="co-page" data-page="characters">
+            <label class="co-field"><span>是否发送当前聊天的人设卡</span><select id="co-character-send-mode"><option value="off">不发送（默认）</option><option value="override">发送，并覆盖正文中的冲突人设</option></select><small>开启后，人设卡是人工确认的最高优先级事实。演绎模式只在演绎阶段注入一次；直接模式只在分镜阶段注入一次；绘画阶段仅附加本页实际出现的人物卡。</small></label>
+            <div class="co-callout"><strong id="co-character-chat-label">当前聊天</strong><br>人设卡按聊天记录分别保存，不会与其他聊天混用。AI 整理读取“制作”页当前楼层范围，并复用保留姓名、排除 User 与剧情正则规则；返回结果仍可手动修改。</div>
+            <div class="co-character-toolbar"><button class="co-mini" id="co-character-add" type="button">＋ 新增人物</button><button class="co-mini co-test" id="co-character-save" type="button">保存修改</button><button class="co-mini" id="co-character-import" type="button">导入 JSON</button><input id="co-character-import-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-character-export" type="button">导出 JSON</button></div>
+            <div id="co-character-list" class="co-character-list"></div>
+            <section class="co-character-ai"><div class="co-inline co-list-head"><span class="co-label">AI 自动整理人设</span><div class="co-list-actions"><select id="co-character-ai-apply"><option value="preserve">仅补充新人物（保留手动卡）</option><option value="replace">用 AI 结果覆盖当前列表</option></select><button class="co-mini co-test" id="co-character-ai-run" type="button">按当前楼层整理</button></div></div><label class="co-field"><span>人设整理指导词</span><textarea id="co-character-ai-guide">${esc(settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE)}</textarea></label><div class="co-profile-actions"><button class="co-mini" id="co-character-ai-reset" type="button">恢复默认指导词</button></div><div class="co-api-status" id="co-character-ai-status">尚未调用。AI 整理使用当前分镜 API，且不会发送参考图或 MVU。</div></section>
+          </div>
           <div class="co-page" data-page="adaptation">${apiProfileManager('ad', 'adaptation')}<div class="co-grid">
             ${apiFields('ad', settings.adaptation)}
             <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="ad-temporary" type="checkbox" ${settings.adaptation.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
@@ -3611,6 +3754,152 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         box.querySelectorAll('.co-regex-up').forEach((el, index) => el.addEventListener('click', () => moveRegex(index, -1)));
         box.querySelectorAll('.co-regex-down').forEach((el, index) => el.addEventListener('click', () => moveRegex(index, 1)));
     }
+    function syncCharacterCardsFromUi() {
+        if (renderingCharacterCards || !renderedCharacterChatKey) return;
+        const box = root.querySelector('#co-character-list');
+        if (!box) return;
+        const collection = settings.characterCardsByChat[renderedCharacterChatKey] || { sendMode: 'off', cards: [], updatedAt: '' };
+        collection.sendMode = val('co-character-send-mode') === 'override' ? 'override' : 'off';
+        collection.cards = [...box.querySelectorAll('.co-character-card')].map(row => normalizeCharacterCard({
+            id: row.dataset.cardId,
+            name: row.querySelector('.co-character-name')?.value,
+            aliases: row.querySelector('.co-character-aliases')?.value,
+            description: row.querySelector('.co-character-description')?.value,
+            source: row.dataset.source,
+        })).filter(card => card.name || card.description);
+        collection.updatedAt = new Date().toISOString();
+        settings.characterCardsByChat[renderedCharacterChatKey] = collection;
+    }
+    function renderCharacterCards(skipSync = false) {
+        if (!skipSync && renderedCharacterChatKey) syncCharacterCardsFromUi();
+        let ctx;
+        try { ctx = context(); } catch { ctx = {}; }
+        const { key, collection } = characterCollectionForChat(ctx);
+        renderedCharacterChatKey = key;
+        renderingCharacterCards = true;
+        const mode = root.querySelector('#co-character-send-mode');
+        if (mode) mode.value = collection.sendMode === 'override' ? 'override' : 'off';
+        const label = root.querySelector('#co-character-chat-label');
+        if (label) label.textContent = `当前聊天：${String(ctx.name2 || ctx.chatId || '未命名聊天')} · ${collection.cards.length} 张人设卡`;
+        const box = root.querySelector('#co-character-list');
+        if (box) {
+            box.innerHTML = collection.cards.length
+                ? collection.cards.map(card => `<article class="co-character-card" data-card-id="${esc(card.id)}" data-source="${esc(card.source)}"><div class="co-character-card-head"><label class="co-field"><span>人物名称</span><input class="co-character-name" value="${esc(card.name)}" placeholder="例如：拉毗"></label><label class="co-field"><span>别名（逗号分隔）</span><input class="co-character-aliases" value="${esc(card.aliases.join('，'))}" placeholder="称号、旧名、常用简称"></label><button class="co-mini co-danger co-character-remove" type="button">删除</button></div><label class="co-field"><span>稳定人设描述</span><textarea class="co-character-description" placeholder="身份、发色发型、瞳色、稳定服装装备、性格口吻等；只写确认事实">${esc(card.description)}</textarea></label><small>${card.source === 'ai' ? '来源：AI 整理（可手动修改）' : '来源：手动'}</small></article>`).join('')
+                : '<div class="co-callout">当前聊天还没有人设卡。可以手动新增，或让 AI 按“制作”页的楼层范围和剧情正则整理。</div>';
+            box.querySelectorAll('.co-character-remove').forEach(button => button.addEventListener('click', () => {
+                syncCharacterCardsFromUi();
+                const current = settings.characterCardsByChat[renderedCharacterChatKey];
+                current.cards = current.cards.filter(card => card.id !== button.closest('.co-character-card')?.dataset.cardId);
+                save(); renderCharacterCards(true);
+            }));
+            box.querySelectorAll('input,textarea').forEach(input => input.addEventListener('change', () => {
+                const row = input.closest('.co-character-card');
+                if (row) row.dataset.source = 'manual';
+                syncCharacterCardsFromUi(); save();
+            }));
+        }
+        renderingCharacterCards = false;
+        save();
+    }
+    function ensureCharacterChatRendered() {
+        let key = renderedCharacterChatKey;
+        try { key = characterChatKey(context()); } catch {}
+        if (!renderedCharacterChatKey || key !== renderedCharacterChatKey) renderCharacterCards();
+        return renderedCharacterChatKey;
+    }
+    function addCharacterCard() {
+        ensureCharacterChatRendered();
+        syncCharacterCardsFromUi();
+        const collection = settings.characterCardsByChat[renderedCharacterChatKey] || characterCollectionForChat().collection;
+        collection.cards.push(normalizeCharacterCard({ name: '', description: '', source: 'manual' }));
+        settings.characterCardsByChat[renderedCharacterChatKey] = collection;
+        save(); renderCharacterCards(true);
+        root.querySelector('#co-character-list .co-character-card:last-child .co-character-name')?.focus();
+    }
+    function saveCharacterCards() {
+        ensureCharacterChatRendered();
+        syncCharacterCardsFromUi(); save(); renderCharacterCards(true);
+        notify('当前聊天的人设卡已保存', 'success');
+    }
+    function exportCharacterCards() {
+        ensureCharacterChatRendered();
+        syncCharacterCardsFromUi(); save();
+        const collection = settings.characterCardsByChat[renderedCharacterChatKey] || { sendMode: 'off', cards: [] };
+        downloadJson({
+            format: 'comic-orb-character-cards',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            sendMode: collection.sendMode,
+            cards: normalizeCharacterCards(collection.cards).map(({ id, name, aliases, description, source }) => ({ id, name, aliases, description, source })),
+        }, `comic-orb-character-cards-${new Date().toISOString().slice(0, 10)}.json`);
+    }
+    async function importCharacterCards(file) {
+        if (!file) return;
+        const targetChatKey = ensureCharacterChatRendered();
+        try {
+            const parsed = JSON.parse(await file.text());
+            const source = Array.isArray(parsed) ? parsed : parsed?.cards;
+            if (!Array.isArray(source)) throw new Error('JSON 必须是人设卡数组，或包含 cards 数组');
+            const cards = normalizeCharacterCards(source);
+            if (!cards.length && source.length) throw new Error('没有可用的人设卡');
+            syncCharacterCardsFromUi();
+            const current = settings.characterCardsByChat[targetChatKey] || { sendMode: 'off', cards: [] };
+            if (current.cards.length && !confirm(`导入会覆盖当前聊天的 ${current.cards.length} 张人设卡，确定继续？`)) return;
+            current.cards = cards;
+            current.sendMode = parsed?.sendMode === 'override' ? 'override' : current.sendMode;
+            current.updatedAt = new Date().toISOString();
+            settings.characterCardsByChat[targetChatKey] = current;
+            save(); if (renderedCharacterChatKey === targetChatKey) renderCharacterCards(true);
+            notify(`已为当前聊天导入 ${cards.length} 张人设卡`, 'success');
+        } catch (error) { notify(`人设卡导入失败：${error.message}`, 'error'); }
+        finally { root.querySelector('#co-character-import-file').value = ''; }
+    }
+    async function runCharacterAssistant() {
+        const button = root.querySelector('#co-character-ai-run');
+        const status = root.querySelector('#co-character-ai-status');
+        try {
+            syncSettingsFromUi();
+            const ctx = context();
+            const targetChatKey = characterChatKey(ctx);
+            if (targetChatKey !== renderedCharacterChatKey) renderCharacterCards();
+            const { start, end } = parseRange(settings.range, ctx.chat.length);
+            const selection = collectPlot(ctx, start, end, {
+                includeNames: Boolean(settings.includeNames),
+                excludeUserFloors: settings.excludeUserFloors !== false,
+                regexList: clone(settings.regexList),
+            });
+            if (!selection.floors.length || !selection.text.trim()) throw new Error('当前楼层范围经 User 排除与剧情正则处理后没有可整理的正文');
+            const guide = val('co-character-ai-guide').trim() || DEFAULT_CHARACTER_ASSISTANT_GUIDE;
+            const applyMode = val('co-character-ai-apply') === 'replace' ? 'replace' : 'preserve';
+            settings.characterAssistantGuide = guide; save();
+            button.disabled = true; button.textContent = '正在整理…';
+            status.textContent = `正在把楼层 ${start}-${end} 的正则处理结果发送给分镜 API；参考图和 MVU 不会发送。`;
+            const raw = await callCharacterAssistant(selection.text, guide, { conf: clone(settings.storyboard) });
+            const incoming = parseCharacterCardsPayload(raw);
+            const collection = settings.characterCardsByChat[targetChatKey] || { sendMode: 'off', cards: [] };
+            let added = incoming.length;
+            if (applyMode === 'replace') {
+                collection.cards = incoming;
+            } else {
+                const existingNames = new Set(collection.cards.flatMap(card => [card.name, ...card.aliases]).map(name => String(name).trim().toLocaleLowerCase()).filter(Boolean));
+                const additions = incoming.filter(card => ![card.name, ...card.aliases].some(name => existingNames.has(String(name).trim().toLocaleLowerCase())));
+                additions.forEach(card => [card.name, ...card.aliases].forEach(name => existingNames.add(String(name).trim().toLocaleLowerCase())));
+                collection.cards.push(...additions); added = additions.length;
+            }
+            collection.updatedAt = new Date().toISOString();
+            settings.characterCardsByChat[targetChatKey] = collection;
+            save(); if (renderedCharacterChatKey === targetChatKey) renderCharacterCards(true);
+            status.textContent = `整理完成：AI 返回 ${incoming.length} 人，${applyMode === 'replace' ? '已覆盖当前列表' : `新增 ${added} 人并保留已有手动卡`}；处理正文 ${selection.text.length} 字符。`;
+            await writeLog('result', 'AI 人设整理完成', { chatKey: targetChatKey, floors: selection.floors, sourceCharacters: selection.text.length, returnedCards: incoming.length, appliedCards: added, applyMode, result: '已保存到发起请求的聊天人设卡' });
+            notify('AI 人设整理完成', 'success');
+        } catch (error) {
+            status.textContent = `整理失败：${error.message}`;
+            await writeLog('error', 'AI 人设整理失败', { chatKey: renderedCharacterChatKey, result: error.message });
+            notify(`AI 人设整理失败：${error.message}`, 'error');
+        } finally {
+            button.disabled = false; button.textContent = '按当前楼层整理';
+        }
+    }
     function moveRegex(index, offset) { syncRegexFromUi(); const target = index + offset; if (target < 0 || target >= settings.regexList.length) return; [settings.regexList[index], settings.regexList[target]] = [settings.regexList[target], settings.regexList[index]]; save(); renderRegexList(); }
     function validateRegexList(input) {
         const source = Array.isArray(input) ? input : input?.rules;
@@ -3731,7 +4020,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.autoRetry = normalizeAutoRetry({ enabled: checked('co-auto-retry-enabled'), mode: val('co-auto-retry-mode'), maxRetries: val('co-auto-retry-count'), intervalMs: val('co-auto-retry-interval') });
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
@@ -4096,6 +4385,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function redrawExecutionSnapshot() {
         const adaptationProfile = activeApiProfile('adaptation'); const storyboardProfile = activeApiProfile('storyboard'); const drawingProfile = activeApiProfile('drawing');
         const backendMode = settings.backendMode === 'full' ? 'full' : 'basic';
+        const characterCollection = (() => { try { return characterCollectionForChat(context(), false).collection; } catch { return { sendMode: 'off', cards: [] }; } })();
+        const characterCards = characterCollection.sendMode === 'override' ? normalizeCharacterCards(characterCollection.cards) : [];
         return {
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
@@ -4105,6 +4396,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             autoRetry: clone(settings.autoRetry),
+            characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
             adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
@@ -4137,7 +4429,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                     const interpretive = await runInterpretiveStoryboard(job.sourcePlot, execution, signal, (_stage, payload) => updateRemoteProcess(processId, `重新分镜 · ${payload.adaptation.segments.length} 个错峰并发子任务`, `启动间隔 ${formatDuration(execution.storyboardLaunchIntervalMs)} · 成功结果将保留到检查点`));
                     plan = interpretive.plan; checkpoint.plan = plan; checkpoint.stage = 'drawing'; await execution.persistCheckpoint();
                 } else if (!plan) {
-                    const raw = await callStoryboard(job.sourcePlot, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, signal });
+                    const raw = await callStoryboard(job.sourcePlot, { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, preflightNeutralize: execution.preflightNeutralize, characterCards: execution.characterCards, signal });
                     ensureNotCanceled(signal); plan = parseStoryboardPlan(raw, execution.storyboardConf, execution.outputLanguage); checkpoint.plan = plan; checkpoint.stage = 'drawing'; await execution.persistCheckpoint();
                 }
                 lastStoryboard = JSON.stringify(plan, null, 2); updateDebug();
@@ -4156,7 +4448,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 finishRemoteProcess(processId, 'success', `${completionText} · ${batch.wallTime}`); notify(`第 ${job.targetFloor} 层${completionText}`, 'success');
             } else {
                 if (!job.pagePrompt) throw new Error('该缓存缺少原始页分镜提示词，无法单页重绘');
-                const result = checkpoint.singleResult || await callDrawing(job.pagePrompt, { withTiming: true, pageNumber: job.pageNumber, pagePrompt: job.pagePrompt, cacheMeta: { ...cacheMeta, storyboardPlan: job.storyboardPlan }, outputLanguage: execution.outputLanguage || job.storyboardPlan?.language, conf: execution.drawingConf, refs: execution.refs, profile: execution.drawingProfile, signal });
+                const result = checkpoint.singleResult || await callDrawing(job.pagePrompt, { withTiming: true, pageNumber: job.pageNumber, pagePrompt: job.pagePrompt, cacheMeta: { ...cacheMeta, storyboardPlan: job.storyboardPlan }, outputLanguage: execution.outputLanguage || job.storyboardPlan?.language, conf: execution.drawingConf, refs: execution.refs, characterCards: execution.characterCards, profile: execution.drawingProfile, signal });
                 checkpoint.singleResult = result;
                 checkpoint.stage = 'persist'; await execution.persistCheckpoint();
                 ensureNotCanceled(signal);
@@ -4226,6 +4518,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-ref-preset-new').addEventListener('click', () => createReferencePreset().catch(error => notify(error.message, 'error')));
     root.querySelector('#co-ref-preset-save').addEventListener('click', () => saveReferencePreset().catch(error => notify(error.message, 'error')));
     root.querySelector('#co-ref-preset-delete').addEventListener('click', () => deleteReferencePreset().catch(error => notify(error.message, 'error')));
+    root.querySelector('#co-character-add').addEventListener('click', addCharacterCard);
+    root.querySelector('#co-character-save').addEventListener('click', saveCharacterCards);
+    root.querySelector('#co-character-import').addEventListener('click', () => root.querySelector('#co-character-import-file').click());
+    root.querySelector('#co-character-import-file').addEventListener('change', event => importCharacterCards(event.target.files?.[0]));
+    root.querySelector('#co-character-export').addEventListener('click', exportCharacterCards);
+    root.querySelector('#co-character-ai-run').addEventListener('click', runCharacterAssistant);
+    root.querySelector('#co-character-ai-reset').addEventListener('click', () => {
+        root.querySelector('#co-character-ai-guide').value = DEFAULT_CHARACTER_ASSISTANT_GUIDE;
+        settings.characterAssistantGuide = DEFAULT_CHARACTER_ASSISTANT_GUIDE; save();
+    });
     root.querySelector('#co-tag-preset').addEventListener('click', addTagCleanupPreset);
     root.querySelector('#co-ai-regex').addEventListener('click', openRegexAssistantDialog);
     root.querySelector('#co-regex-ai-send').addEventListener('click', runRegexAssistant);
@@ -4351,7 +4653,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-enable-redraw').addEventListener('change', () => { syncSettingsFromUi(); scheduleComicMediaDecoration(); });
     root.querySelector('#co-enable-run-cooldown').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
     root.querySelector('#co-insert-into-floor').addEventListener('change', () => { syncSettingsFromUi(); renderRunCooldown(); });
-    root.querySelectorAll('.co-tab').forEach(tab => tab.addEventListener('click', () => { root.querySelectorAll('.co-tab,.co-page').forEach(x => x.classList.remove('active')); tab.classList.add('active'); root.querySelector(`.co-page[data-page="${tab.dataset.page}"]`).classList.add('active'); if (tab.dataset.page === 'cache') renderImageCache(); if (tab.dataset.page === 'processes') renderProcessCenter(); if (tab.dataset.page === 'debug') refreshLogs().catch(error => notify(error.message, 'error')); }));
+    root.querySelectorAll('.co-tab').forEach(tab => tab.addEventListener('click', () => { root.querySelectorAll('.co-tab,.co-page').forEach(x => x.classList.remove('active')); tab.classList.add('active'); root.querySelector(`.co-page[data-page="${tab.dataset.page}"]`).classList.add('active'); if (tab.dataset.page === 'characters') renderCharacterCards(); if (tab.dataset.page === 'cache') renderImageCache(); if (tab.dataset.page === 'processes') renderProcessCenter(); if (tab.dataset.page === 'debug') refreshLogs().catch(error => notify(error.message, 'error')); }));
     root.querySelectorAll('input,textarea,select').forEach(el => { if (!el.classList.contains('co-ref-hint') && !el.classList.contains('co-ref-file')) el.addEventListener('change', () => { try { syncSettingsFromUi(); } catch {} }); });
     document.addEventListener('pointerdown', event => { if (!event.target.closest(`#${ROOT_ID} .co-model-row`)) closeModelOptions(); });
     document.addEventListener('click', event => {
@@ -4466,7 +4768,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     addEventListener('resize', () => scheduleFloatingUiClamp('window-resize'), { passive: true });
     addEventListener('orientationchange', () => { scheduleFloatingUiClamp('orientation-change'); setTimeout(() => clampFloatingUi('orientation-settled'), 350); }, { passive: true });
     globalThis.visualViewport?.addEventListener('resize', () => scheduleFloatingUiClamp('visual-viewport-resize'), { passive: true });
-    renderRegexList(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
+    renderRegexList(); renderCharacterCards(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
+    try {
+        const stContext = context();
+        const chatChangedEvent = stContext.eventTypes?.CHAT_CHANGED;
+        if (chatChangedEvent) stContext.eventSource?.on?.(chatChangedEvent, () => {
+            renderCharacterCards();
+        });
+    } catch {}
     initializeComicMediaActions();
     initializeReferencePresets().catch(error => { console.warn('[漫画工房] 参考图预设数据库读取失败', error); renderReferencePresetManager(); renderRefs(); notify(`参考图预设读取失败：${error.message}`, 'error'); });
     migrateLegacyTaggedMarkdown().catch(error => console.warn('[漫画工房] 旧版正文漫画标识迁移失败', error));
