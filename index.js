@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.27.0';
+    const COMIC_ORB_VERSION = '1.27.1';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -83,7 +83,7 @@
     const DEFAULT_STORYBOARD_STYLE_PROMPT = `你是漫画原作画风分析顾问。这个阶段只负责给分镜AI提供视觉语言，不改写剧情。
 先检查用户提供的标题、作品名或明确说明：若能可靠识别《为美好的世界献上祝福！》（素晴）、《刃牙》或其他漫画/动画作品，请写出source_work并提炼作品级的高层特征，包括线条与勾线、角色比例与造型倾向、构图和分格节奏、动作表现、明暗色彩、背景细节密度、对白框和拟声字的处理。只使用可执行的高层特征，不复制具体原作页面、分格、姿势、台词、素材或作者签名式笔触，也不要声称精确复刻某位作者。
 没有可靠原作线索时不要猜作品名，直接使用以下漫画球默认画风：${JSON.stringify(DEFAULT_COMIC_STYLE_PROFILE)}。
-输出的画风分析只允许约束视觉表现，不能新增人物、怪物、年龄、外貌、服装、道具、对白、事件或结局；输入与人设卡明确的事实优先。分镜AI必须把本分析作为唯一画风依据，写入global_style.source_style_analysis，并在每页page_prompt中沿用，不要在不同页面重新猜测另一套画风。建议输出字段：${COMIC_STYLE_ANALYSIS_SCHEMA}`;
+输出的画风分析只允许约束视觉表现，不能新增人物、怪物、年龄、外貌、服装、道具、对白、事件或结局；输入与人设卡明确的事实优先。最终共享结果必须作为本次任务唯一画风依据；负责生成分镜JSON的阶段要把它写入global_style.source_style_analysis并在每页page_prompt中沿用，不要在不同页面重新猜测另一套画风。建议输出字段：${COMIC_STYLE_ANALYSIS_SCHEMA}`;
     const DEFAULT_STORYBOARD_SYSTEM_PROMPT = `你是专业漫画分镜主笔。先精炼剧情并整理必要的静态视觉连续性，但不得续写输入范围之外的剧情事件，再输出可被程序解析并按页并发绘制的严格 JSON。只输出一个 JSON 对象，禁止 Markdown、代码块、解释、注释或 JSON 外文字。
 
 顶层结构必须为：
@@ -2134,9 +2134,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 const result = await callAdaptation(testPrompt, {
                     test: true, conf: settings.adaptation, outputLanguage: settings.outputLanguage,
                     totalPageRange: settings.interpretivePageRange, workerPageRange: settings.storyboardWorkerPages,
+                    stylePromptEnabled: settings.storyboard.stylePromptEnabled !== false,
+                    stylePrompt: settings.storyboard.stylePrompt,
                     withTiming: true,
                 });
-                const plan = parseAdaptationPlan(result.text, settings.outputLanguage, settings.interpretivePageRange, settings.storyboardWorkerPages);
+                const plan = parseAdaptationPlan(result.text, settings.outputLanguage, settings.interpretivePageRange, settings.storyboardWorkerPages, settings.storyboard.stylePromptEnabled !== false);
                 lastStoryboard = JSON.stringify(plan, null, 2); updateDebug();
                 status.textContent = `测试成功且演绎 JSON 校验通过（${lastApiTiming?.elapsedText || '耗时未知'}）：${plan.segments.length} 段，共 ${plan.segments.reduce((sum, segment) => sum + Number(segment.page_count), 0)} 页。`;
             } else if (kind === 'storyboard') {
@@ -2178,9 +2180,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         });
         const normalizedPrompt = upgradeStoryboardClosedWorld(conf.systemPrompt).replace(STORYBOARD_CLOSED_WORLD_RULE, '').trim();
         const adultIdentityRule = '\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判：不得因此改变参考图脸型、身形比例、体态、服装、身体动态或原剧情镜头，也不得把角色画得更老。最终JSON不写具体年龄、“成年”等年龄声明或任何低龄/学龄称谓。上游被剔除的冲突年龄元数据不得重新猜回。';
+        const inheritedStyle = options.inheritedStyle ? normalizeSourceStyleAnalysis(options.inheritedStyle) : null;
         const stylePromptRule = conf.stylePromptEnabled === false
-            ? '【独立原作画风提示词】已关闭；不要要求演绎AI或分镜AI额外确认作品画风，只遵守输入中明确的视觉事实、角色连续性和默认全彩规则。'
-            : `【独立原作画风提示词——唯一画风依据】${String(conf.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT).trim()}`;
+            ? '【独立原作画风提示词】已关闭；不要额外确认作品画风，只遵守输入中明确的视觉事实、角色连续性和默认全彩规则。'
+            : inheritedStyle
+                ? `【演绎阶段共享画风——唯一画风依据】以下JSON是演绎AI阅读完整剧情后一次性确定的画风结果：${JSON.stringify(inheritedStyle)}。必须原样继承其source_work及视觉特征，写入global_style.source_style_analysis，并落实到每页page_prompt；禁止根据当前被切分的局部剧情重新识别作品、改猜画风或用分镜系统提示词覆盖它。`
+                : `【直接分镜模式独立原作画风提示词——唯一画风依据】${String(conf.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT).trim()}`;
         const effectiveSystemPrompt = `${normalizedPrompt}\n\n【漫画球本次实际校验范围】pages 必须为 ${limits.pages.min}-${limits.pages.max} 页；每页 panels 必须为 ${limits.panels.min}-${limits.panels.max} 格。此处为程序最终采用的范围，若前文存在旧范围，以此处为准。范围只规定合法上下限，并不要求选择最大值；在不低于最小值的前提下按原剧情实际密度选择最少且足够的页数与格数。\n【漫画球对白改编与证据规则】对白数量和覆盖率完全自由；允许整页无对白、只用拟声字或只保留一句关键台词，禁止为了覆盖格数硬塞对白、内心独白或旁白。若前文存在最低对白数量或覆盖比例要求，以本段自由规则为准。保留原剧情意图、关系和角色口吻，但禁止机械照抄小说原句；允许删、并、重排和重写。存在dialogue时只使用 {"type":"speech|thought|narration","speaker":"角色名","text":"漫画实际显示文字","visual_anchor":"能直接证明本句事实的当前格可见证据"}。visual_anchor不是说话者位置，也不是随便找一个可见物；它必须直接支撑text中的对象、地点或判断。例如“工地有推土机”需要工地路牌/地图/可见工地，方向盘不算；“过桥就到我家”需要地图、路标或可见庄园地标，残骸不算；“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。无法提供证据时，必须改写text使它只陈述当前画面能证明的内容，或修改panel补入证据。page_prompt逐字包含实际采用的text和框体类型，并完整描述证据画面；visual_anchor允许同义改写。\n【漫画球本地化硬规则】本次漫画输出语言为“${outputLanguage}”。顶层 language 必须逐字写成“${outputLanguage}”。所有 dialogue.text、旁白、内心独白、拟声字、标牌及画内可读文字使用该语言；专有名词只保留必要原文或缩写，不得擅自切换主要语言。page_prompt必须要求绘画模型逐字照抄该语言文本，禁止把speech/thought/narration渲染成Normal、Interior thoughts等可见标签。\n【漫画球色彩硬规则】默认全彩，并让每页page_prompt重申global_style.color_script中的环境色、人物固有色和特效色。黑白服装不等于黑白画面。只有剧情明确需要回忆、冲击瞬间或主观情绪强调时，才允许指定单格临时变调；内容降级与合规转换不得改变整页或跨页色调。\n【漫画球可选实体设定】entity_bible是软约束且完全可选，不属于程序校验条件。存在跨页人物、怪物、载具或关键道具时，可简洁记录稳定身份、数量特征、相对体型、常驻装备及明确状态变化；纯景色、一次性场景或无需连续实体时可省略或留空。收到上游entity_bible时尽量沿用，不因措辞或拼写小差异重复创建实体；只把本页实际出现实体的相关锁定自然写入page_prompt，不要向景色页强行添加角色。即使entity_bible缺字段、名称拼写不统一或局部矛盾，也应凭剧情常识继续完成分镜，禁止因此拒绝输出或等待修订。\n【漫画球外貌事实保真】角色的发色、发型、瞳色、肤色、体型、服装及其他永久外貌只能来自本次输入或上游entity_bible明确给出的事实。没有提供的项目保持未指定，不得依据姓名、种族、职业、世界观或常见二次元形象自行补全。未知外貌时仍要把分镜写具体：使用角色名、身份、动作、表情、朝向、站位、互动对象、已知装备和环境关系描述，但不要添加任何未知外貌；characters对应字段允许留空或写“未指定”。\n\n${STORYBOARD_GAZE_RULE}${adultIdentityRule}\n\n${stylePromptRule}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
         const characterOverrideRule = normalizeCharacterCards(options.characterCards).length
             ? '\n\n【用户人设卡最高优先级】用户消息末尾的 comic_orb_character_cards 是人工确认的覆盖层，不是剧情。正文、MVU、上游 entity_bible、模型常识与它冲突时，必须采用卡内事实；未知字段保持未指定。把相关人物的稳定事实写进 characters、可选 entity_bible 与 page_prompt，但不得因此新增人物、事件或镜头。'
@@ -2199,7 +2204,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const validateStoryboardResponse = value => {
             validateTextApiPayload(value, '分镜 API ', body);
             const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
-            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseStoryboardPlan(extractApiResponseText(value), conf, outputLanguage, limits);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseStoryboardPlan(extractApiResponseText(value), conf, outputLanguage, limits, inheritedStyle);
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '分镜 API 测试' : '分镜生成', validateStoryboardResponse);
         const text = extractApiResponseText(data);
@@ -2270,6 +2275,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const outputLanguage = normalizeOutputLanguage(options.outputLanguage || settings.outputLanguage);
         const totalPageRange = normalizeStoryboardRange(options.totalPageRange?.min, options.totalPageRange?.max, 2, 8, 20);
         const workerPageRange = normalizeWorkerPageSpec(options.workerPageRange || settings.storyboardWorkerPages);
+        const stylePromptEnabled = Object.prototype.hasOwnProperty.call(options, 'stylePromptEnabled')
+            ? Boolean(options.stylePromptEnabled)
+            : settings.storyboard.stylePromptEnabled !== false;
+        const stylePrompt = String(options.stylePrompt || settings.storyboard.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT).trim();
         assertInterpretivePageAllocation(totalPageRange, workerPageRange);
         const preflightNeutralize = Object.prototype.hasOwnProperty.call(options, 'preflightNeutralize')
             ? Boolean(options.preflightNeutralize)
@@ -2296,7 +2305,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const characterOverrideRule = normalizeCharacterCards(options.characterCards).length
             ? '\n【用户人设卡最高优先级】输入末尾的 comic_orb_character_cards 是人工确认的事实覆盖层，不是新剧情。正文、MVU或你的推断与其冲突时采用人设卡；将相关稳定事实准确带入顶层 entity_bible 和对应故事段，未知信息留空，不得借此扩写事件。'
             : '';
-        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量】漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。完整剧情只允许拆成1到20段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。你只负责剧情演绎与分段，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。${characterOverrideRule}\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
+        const adaptationStyleRule = stylePromptEnabled
+            ? `【演绎模式原作画风分析——读取完整剧情一次】你能够看到未切分的完整剧情，因此由你在演绎阶段完成一次画风识别。严格按照下面的独立画风提示词分析，并在顶层输出source_style_analysis，字段形状为${COMIC_STYLE_ANALYSIS_SCHEMA}。该对象只记录跨段共享的高层视觉语言，不得写进segments、不得加入镜头/分格/绘画提示词，也不得改变剧情；后续每个分镜AI会直接继承它且不会重新猜测。\n${stylePrompt}`
+            : '【演绎模式画风分析】独立画风提示词已关闭；不要输出source_style_analysis，也不要确认或猜测原作画风。';
+        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量】漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。完整剧情只允许拆成1到20段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。你只负责剧情演绎与分段；除顶层可选source_style_analysis外，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。${characterOverrideRule}\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${adaptationStyleRule}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
         const extras = apiExtras(conf);
         const body = {
             model: conf.model,
@@ -2310,13 +2322,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const validateAdaptationResponse = value => {
             validateTextApiPayload(value, '演绎 API ', body);
             const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
-            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseAdaptationPlan(extractApiResponseText(value), outputLanguage, totalPageRange, workerPageRange);
+            if (retryPolicy.enabled && retryPolicy.mode === 'full') parseAdaptationPlan(extractApiResponseText(value), outputLanguage, totalPageRange, workerPageRange, stylePromptEnabled);
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '演绎 API 测试' : '剧情演绎', validateAdaptationResponse);
         const text = extractApiResponseText(data);
         return options.withTiming ? { text, timing: data?.__comicOrbTiming ? { ...data.__comicOrbTiming } : null } : text;
     }
-    function parseAdaptationPlan(raw, outputLanguage = settings.outputLanguage, totalPageRange = settings.interpretivePageRange, workerPageRange = settings.storyboardWorkerPages) {
+    function parseAdaptationPlan(raw, outputLanguage = settings.outputLanguage, totalPageRange = settings.interpretivePageRange, workerPageRange = settings.storyboardWorkerPages, stylePromptEnabled = settings.storyboard.stylePromptEnabled !== false) {
         const plan = parseModelJson(raw, '演绎');
         const expectedLanguage = normalizeOutputLanguage(outputLanguage);
         const expectedPages = normalizeStoryboardRange(totalPageRange?.min, totalPageRange?.max, 2, 8, 20);
@@ -2331,6 +2343,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!String(plan.title || '').trim()) plan.title = '未命名漫画';
         if (!String(plan.source_summary || '').trim()) plan.source_summary = String(plan.summary || plan.title);
         if (!String(plan.dramatic_throughline || '').trim()) plan.dramatic_throughline = String(plan.throughline || plan.source_summary);
+        if (stylePromptEnabled) {
+            const styleCandidate = plan.source_style_analysis ?? plan.global_style?.source_style_analysis ?? plan.style_analysis;
+            const hadStyleAnalysis = typeof styleCandidate === 'string'
+                ? Boolean(styleCandidate.trim())
+                : Boolean(styleCandidate && typeof styleCandidate === 'object' && !Array.isArray(styleCandidate) && Object.keys(styleCandidate).length);
+            plan.source_style_analysis = normalizeSourceStyleAnalysis(styleCandidate);
+            if (!hadStyleAnalysis) queueLog('operation', '演绎画风分析缺失，已使用默认画风', { result: '不阻断工作流；并发分镜将共享漫画球默认画风' });
+        } else if (Object.prototype.hasOwnProperty.call(plan, 'source_style_analysis')) {
+            delete plan.source_style_analysis;
+        }
         if (!Array.isArray(plan.segments) || plan.segments.length < 1 || plan.segments.length > 20) errors.push(`segments 必须为1到20项，实际为 ${Array.isArray(plan.segments) ? plan.segments.length : '非数组'}`);
         let totalPages = 0;
         if (Array.isArray(plan.segments)) plan.segments.forEach((segment, index) => {
@@ -2364,11 +2386,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const sharedEntityBible = Object.prototype.hasOwnProperty.call(adaptation || {}, 'entity_bible')
             ? JSON.stringify(adaptation.entity_bible)
             : '未提供；若本段存在明显的跨页实体连续性风险，可自行建立简短的可选entity_bible。';
+        const sharedStyle = Object.prototype.hasOwnProperty.call(adaptation || {}, 'source_style_analysis')
+            ? JSON.stringify(normalizeSourceStyleAnalysis(adaptation.source_style_analysis))
+            : '独立画风提示词已关闭；本段不额外确认原作画风。';
         return `这是上游剧情演绎编辑交付的第 ${segment.segment}/${adaptation.segments.length} 段。请只对本段进行精细漫画分镜，不要重新扩写其他段落，也不要重复上一段结束事件。
 
 总标题：${adaptation.title}
 全局剧情主线：${adaptation.dramatic_throughline}
 全局共享entity_bible（软约束，不参与格式校验）：${sharedEntityBible}
+全局共享source_style_analysis（唯一画风依据，不得按局部剧情重新猜测）：${sharedStyle}
 本段标题：${segment.title}
 本段叙事作用：${segment.story_purpose}
 进入状态：${segment.entry_state}
@@ -2379,7 +2405,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
 页数：必须严格输出 ${segment.page_count} 页。
 特写指导：${closeup}
 
-把上述剧情材料转成完整的comic_orb_storyboard_v1 JSON。entity_bible可沿用、补充、简化或在不需要时省略；不要因为其中缺字段、拼写差异或轻微矛盾而停止工作。所有page_prompt仍须完全自包含；本段第一页从进入状态之后开始，本段最后一页必须到达结束状态。
+把上述剧情材料转成完整的comic_orb_storyboard_v1 JSON。entity_bible可沿用、补充、简化或在不需要时省略；不要因为其中缺字段、拼写差异或轻微矛盾而停止工作。若提供了source_style_analysis，必须把它写入global_style并落实到本段全部page_prompt，禁止重新识别作品或另造画风。所有page_prompt仍须完全自包含；本段第一页从进入状态之后开始，本段最后一页必须到达结束状态。
 
 【本段剧情边界】本段材料是封闭范围，只能表现精炼剧情中已经存在的事件，并严格停在“结束状态”。全局主线只帮助理解上下文，不授权提前表现其他段落；不得依据世界观、MVU或类型常识揭示本段未命名对象、补写下一事件或创造新的高潮。固定页数需要更多画幅时，拆分现有动作、反应、环境与情绪节拍，不得新增或重复剧情事实。`;
     }
@@ -2392,16 +2418,20 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             });
             plan.pages.forEach(page => pages.push({ ...clone(page), page: pages.length + 1, adaptation_segment: segment.segment, adaptation_segment_title: segment.title }));
         });
+        const inheritedStyle = adaptation?.source_style_analysis ? normalizeSourceStyleAnalysis(adaptation.source_style_analysis) : null;
         const combined = {
             schema_version: 'comic_orb_storyboard_v1',
             language: adaptation.language,
             title: adaptation.title,
             refined_plot: adaptation.source_summary,
-            global_style: segmentResults[0]?.plan?.global_style || {},
+            global_style: inheritedStyle
+                ? normalizeStoryboardGlobalStyle(segmentResults[0]?.plan?.global_style, inheritedStyle)
+                : (segmentResults[0]?.plan?.global_style || {}),
             characters,
             pages,
             adaptation_plan: clone(adaptation),
         };
+        if (inheritedStyle) combined.source_style_analysis = clone(inheritedStyle);
         if (Object.prototype.hasOwnProperty.call(adaptation || {}, 'entity_bible')) {
             combined.entity_bible = clone(adaptation.entity_bible);
         } else {
@@ -2418,14 +2448,22 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const checkpoint = execution.checkpoint;
         let adaptation = checkpoint?.adaptation || null; let adaptationTiming = checkpoint?.adaptationTiming || null;
         if (!adaptation) {
-            const adaptationResult = await callAdaptation(plot, { conf: execution.adaptationConf, outputLanguage: execution.outputLanguage, totalPageRange: execution.interpretivePageRange, workerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, characterCards: execution.characterCards, withTiming: true, signal });
-            adaptation = parseAdaptationPlan(adaptationResult.text, execution.outputLanguage, execution.interpretivePageRange, execution.storyboardWorkerPageRange);
+            const adaptationResult = await callAdaptation(plot, { conf: execution.adaptationConf, outputLanguage: execution.outputLanguage, totalPageRange: execution.interpretivePageRange, workerPageRange: execution.storyboardWorkerPageRange, preflightNeutralize: execution.preflightNeutralize, characterCards: execution.characterCards, stylePromptEnabled: execution.storyboardConf.stylePromptEnabled !== false, stylePrompt: execution.storyboardConf.stylePrompt, withTiming: true, signal });
+            adaptation = parseAdaptationPlan(adaptationResult.text, execution.outputLanguage, execution.interpretivePageRange, execution.storyboardWorkerPageRange, execution.storyboardConf.stylePromptEnabled !== false);
             adaptationTiming = adaptationResult.timing;
             if (checkpoint) { checkpoint.adaptation = adaptation; checkpoint.adaptationTiming = adaptationTiming; checkpoint.stage = 'storyboard'; }
             await execution.persistCheckpoint?.();
             await writeLog('result', '剧情演绎 JSON 校验通过', execution.debugEnabled
-                ? { title: adaptation.title, language: adaptation.language, segments: adaptation.segments, timing: adaptationTiming }
-                : { result: `${adaptation.title} · ${adaptation.segments.length} 段 · ${adaptation.segments.reduce((sum, segment) => sum + Number(segment.page_count), 0)} 页`, elapsed: adaptationTiming?.elapsedText });
+                ? { title: adaptation.title, language: adaptation.language, sourceStyleAnalysis: adaptation.source_style_analysis || null, segments: adaptation.segments, timing: adaptationTiming }
+                : { result: `${adaptation.title} · ${adaptation.segments.length} 段 · ${adaptation.segments.reduce((sum, segment) => sum + Number(segment.page_count), 0)} 页 · 画风 ${adaptation.source_style_analysis?.source_work || (execution.storyboardConf.stylePromptEnabled === false ? '关闭' : '默认')}`, elapsed: adaptationTiming?.elapsedText });
+        }
+        if (execution.storyboardConf.stylePromptEnabled !== false && !adaptation.source_style_analysis) {
+            adaptation.source_style_analysis = normalizeSourceStyleAnalysis(null);
+            if (checkpoint) checkpoint.adaptation = adaptation;
+            await execution.persistCheckpoint?.();
+            await writeLog('operation', '旧演绎检查点缺少共享画风', { result: '已补入漫画球默认画风；新建任务会由演绎AI读取完整剧情后识别' });
+        } else if (execution.storyboardConf.stylePromptEnabled === false && Object.prototype.hasOwnProperty.call(adaptation, 'source_style_analysis')) {
+            delete adaptation.source_style_analysis;
         }
         onStage('storyboard', { adaptation });
         const retainedSegments = checkpoint?.segmentResults || new Map();
@@ -2447,9 +2485,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             try {
                 await abortableDelay(launchIndex * staggerMs, controller.signal);
                 const exactLimits = { pages: { min: Number(segment.page_count), max: Number(segment.page_count) }, panels: storyboardLimits(execution.storyboardConf).panels };
-                const result = await callStoryboard(adaptationSegmentPrompt(adaptation, segment), { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, limits: exactLimits, preflightNeutralize: execution.preflightNeutralize, withTiming: true, signal: controller.signal });
+                const inheritedStyle = execution.storyboardConf.stylePromptEnabled === false ? null : adaptation.source_style_analysis;
+                const result = await callStoryboard(adaptationSegmentPrompt(adaptation, segment), { conf: execution.storyboardConf, refs: execution.refs, outputLanguage: execution.outputLanguage, limits: exactLimits, preflightNeutralize: execution.preflightNeutralize, inheritedStyle, withTiming: true, signal: controller.signal });
                 const segmentConf = { ...execution.storyboardConf, minPages: segment.page_count, maxPages: segment.page_count };
-                const plan = parseStoryboardPlan(result.text, segmentConf, execution.outputLanguage, exactLimits);
+                const plan = parseStoryboardPlan(result.text, segmentConf, execution.outputLanguage, exactLimits, inheritedStyle);
                 const retained = { segment, plan, timing: result.timing };
                 retainedSegments.set(Number(segment.segment), retained);
                 await execution.persistCheckpoint?.();
@@ -2610,23 +2649,24 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             avoid: list('avoid', DEFAULT_COMIC_STYLE_PROFILE.avoid),
         };
     }
-    function normalizeStoryboardGlobalStyle(value) {
+    function normalizeStoryboardGlobalStyle(value, inheritedStyle = null) {
         const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-        const analysisInput = input.source_style_analysis && typeof input.source_style_analysis === 'object'
+        const analysisInput = inheritedStyle || (input.source_style_analysis && typeof input.source_style_analysis === 'object'
             ? input.source_style_analysis
-            : { source_work: input.source_work, style_summary: input.visual_style, color_script: input.color_script, render_rules: input.render_rules, avoid: input.negative_prompt };
+            : { source_work: input.source_work, style_summary: input.visual_style, color_script: input.color_script, render_rules: input.render_rules, avoid: input.negative_prompt });
         const analysis = normalizeSourceStyleAnalysis(analysisInput);
+        const locked = Boolean(inheritedStyle);
         return {
             ...input,
-            source_work: String(input.source_work || analysis.source_work || '').trim(),
+            source_work: String(locked ? analysis.source_work : (input.source_work || analysis.source_work || '')).trim(),
             source_style_analysis: analysis,
-            visual_style: String(input.visual_style || analysis.style_summary).trim() || analysis.style_summary,
-            color_script: String(input.color_script || analysis.color_script).trim() || analysis.color_script,
-            render_rules: Array.isArray(input.render_rules) && input.render_rules.length ? input.render_rules : analysis.render_rules,
-            negative_prompt: Array.isArray(input.negative_prompt) ? input.negative_prompt : analysis.avoid,
+            visual_style: String(locked ? analysis.style_summary : (input.visual_style || analysis.style_summary)).trim() || analysis.style_summary,
+            color_script: String(locked ? analysis.color_script : (input.color_script || analysis.color_script)).trim() || analysis.color_script,
+            render_rules: locked ? analysis.render_rules : (Array.isArray(input.render_rules) && input.render_rules.length ? input.render_rules : analysis.render_rules),
+            negative_prompt: locked ? analysis.avoid : (Array.isArray(input.negative_prompt) ? input.negative_prompt : analysis.avoid),
         };
     }
-    function parseStoryboardPlan(raw, conf = settings.storyboard, outputLanguage = settings.outputLanguage, limitsOverride = null) {
+    function parseStoryboardPlan(raw, conf = settings.storyboard, outputLanguage = settings.outputLanguage, limitsOverride = null, inheritedStyle = null) {
         const parsed = parseModelJson(raw, '分镜');
         const expectedLanguage = normalizeOutputLanguage(outputLanguage);
         const plan = Array.isArray(parsed)
@@ -2639,7 +2679,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         plan.schema_version = 'comic_orb_storyboard_v1';
         plan.language = expectedLanguage;
         if (!String(plan.title || '').trim()) plan.title = '未命名漫画';
-        if (conf.stylePromptEnabled !== false) plan.global_style = normalizeStoryboardGlobalStyle(plan.global_style);
+        if (conf.stylePromptEnabled !== false) plan.global_style = normalizeStoryboardGlobalStyle(plan.global_style, inheritedStyle);
         if (pages.length < limits.pages.min || pages.length > limits.pages.max) errors.push(`pages 数量必须为 ${limits.pages.min}-${limits.pages.max}，实际为 ${pages.length}`);
         pages.forEach((page, pageIndex) => {
             const pageNo = pageIndex + 1; let panels = page?.panels;
@@ -3526,7 +3566,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>深度思考开关</span><select id="ad-thinking-mode"><option value="default" ${settings.adaptation.thinkingMode === 'default' || !settings.adaptation.thinkingMode ? 'selected' : ''}>不发送（服务默认）</option><option value="disabled" ${settings.adaptation.thinkingMode === 'disabled' ? 'selected' : ''}>关闭深度思考（最快）</option><option value="enabled" ${settings.adaptation.thinkingMode === 'enabled' ? 'selected' : ''}>启用深度思考</option><option value="auto" ${settings.adaptation.thinkingMode === 'auto' ? 'selected' : ''}>模型自动判断</option></select></label>
             <div class="co-callout co-full">演绎 API 现在完全独立于分镜 API：连接、Key、模型、输出上限、推理力度、额外请求头/请求体、测试和提示词预设均单独保存。它只在演绎分镜模式第一阶段调用；直接分镜模式不会调用它。</div>
             <div class="co-full">${promptPresetManager('ad', 'adaptation')}<label class="co-field"><span>演绎系统提示词</span><textarea id="ad-system">${esc(settings.adaptation.systemPrompt || DEFAULT_ADAPTATION_SYSTEM_PROMPT)}</textarea></label></div>
-            <div class="co-callout co-full">演绎提示词只管理剧情提炼、人物动机、因果、对白意图、故事分段、每段页数分配和至多一个高潮特写意图；不要描述镜头、构图、分格、光影、配色或绘画细节。</div>
+            <div class="co-callout co-full">演绎提示词主要管理剧情提炼、人物动机、因果、对白意图、故事分段、每段页数分配和至多一个高潮特写意图。启用分镜页的独立画风提示词后，演绎 AI 会额外利用完整剧情识别一次原作画风并输出共享结构；它仍不描述具体镜头、构图、分格或绘画提示词。</div>
             <label class="co-field co-full"><span>额外请求体 JSON（可覆盖默认字段）</span><textarea id="ad-extra">${esc(settings.adaptation.extraBody)}</textarea></label>
             <label class="co-field co-full"><span>API 测试剧情（只在点击测试时使用）</span><textarea id="ad-test-prompt">${esc(settings.adaptation.testPrompt || DEFAULT_ADAPTATION_TEST_PROMPT)}</textarea></label>
             <div class="co-full co-api-actions"><button class="co-mini co-test" id="ad-test" type="button">测试并校验演绎 JSON</button><span class="co-api-status" id="ad-api-status">尚未测试</span></div>
@@ -3547,8 +3587,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>默认每页最多格数</span><input id="sb-max-panels" type="number" min="1" max="20" value="${esc(settings.storyboard.maxPanels)}"></label>
             <div class="co-callout co-full">页数与格数不再硬编码。系统提示词中的明确范围（例如“pages只能有1到5页”“每页panels为1到5格”）会覆盖上面的默认值；最可靠的写法是在提示词单独加入 <code>comic_orb_limits: {"pages":[1,5],"panels":[1,5]}</code>。支持1-20页、每页1-20格。脚本仍会检查连续编号、必填字段、高潮格、page_prompt 和所有跨页 continuity。</div>
             <div class="co-full">${promptPresetManager('sb', 'storyboard')}<label class="co-field"><span>分镜系统提示词（剧情与结构）</span><textarea id="sb-system">${esc(settings.storyboard.systemPrompt)}</textarea></label></div>
-            <label class="co-check co-full" title="启用后，下面的独立画风提示词是分镜 AI 唯一采用的画风依据；演绎 AI 不会确认或生成画风信息。"><input id="sb-style-enabled" type="checkbox" ${settings.storyboard.stylePromptEnabled !== false ? 'checked' : ''}>启用独立原作画风分析提示词</label>
-            <label class="co-field co-full"><span>原作画风提示词（独立设置）</span><textarea id="sb-style-prompt" placeholder="可填写作品名识别与默认画风规则">${esc(settings.storyboard.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT)}</textarea><small>启用时仅此处决定线条、角色造型、构图节奏、色彩与渲染风格；分镜系统提示词、演绎结果和剧情正文不能覆盖它。关闭后不会额外要求 AI 确认原作画风。</small></label>
+            <label class="co-check co-full" title="直接模式由分镜 AI 分析；演绎模式由看过完整剧情的演绎 AI 分析一次，再把同一结果交给所有并发分镜。"><input id="sb-style-enabled" type="checkbox" ${settings.storyboard.stylePromptEnabled !== false ? 'checked' : ''}>启用独立原作画风分析提示词</label>
+            <label class="co-field co-full"><span>原作画风提示词（两种模式共享）</span><textarea id="sb-style-prompt" placeholder="可填写作品名识别与默认画风规则">${esc(settings.storyboard.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT)}</textarea><small>直接分镜：由分镜 AI 根据完整楼层文本分析。演绎分镜：由演绎 AI 根据未切分的完整剧情分析一次，随后所有分镜段只继承结果，不再各自猜测。启用时仅此处决定线条、角色造型、构图节奏、色彩与渲染风格。</small></label>
             <label class="co-field co-full"><span>额外请求体 JSON（可覆盖默认字段）</span><textarea id="sb-extra">${esc(settings.storyboard.extraBody)}</textarea></label>
             <label class="co-field co-full"><span>API 测试提示词（只在点击测试时使用）</span><textarea id="sb-test-prompt">${esc(settings.storyboard.testPrompt)}</textarea></label>
             <div class="co-full co-api-actions"><button class="co-mini co-test" id="sb-test" type="button">测试并校验 JSON</button><span class="co-api-status" id="sb-api-status">尚未测试</span></div>
