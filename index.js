@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.26.0';
+    const COMIC_ORB_VERSION = '1.26.1';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -545,6 +545,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     if (!settings.migrations.defaultOutputLanguageZhCnV1) {
         if (!String(settings.outputLanguage || '').trim() || String(settings.outputLanguage).trim().toLocaleLowerCase() === 'auto') settings.outputLanguage = 'zh-CN';
         settings.migrations.defaultOutputLanguageZhCnV1 = true;
+    }
+    if (!settings.migrations.flexibleStoryboardWorkerPagesV1) {
+        // 旧版常见的固定 3 页会让短开场/收尾段无法通过校验；将该旧默认值迁移为按剧情密度分配的 1-3 页。
+        if (String(settings.storyboardWorkerPages || '').trim() === '3') settings.storyboardWorkerPages = '1-3';
+        settings.migrations.flexibleStoryboardWorkerPagesV1 = true;
     }
     if (Array.isArray(settings.promptPresets?.storyboard)) settings.promptPresets.storyboard.forEach(preset => { if (!preset) return; if (preset.content === LEGACY_STORYBOARD_SYSTEM_PROMPT) preset.content = DEFAULT_STORYBOARD_SYSTEM_PROMPT; preset.content = upgradeStoryboardClosedWorld(preset.content); });
     if (!settings.regexList.length && String(settings.regexRules || '').trim()) settings.regexList = migrateRegexRules(settings.regexRules);

@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.26.0/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.26.1/diagnose.js');
 await doctor.download();
 ```
 
@@ -117,7 +117,7 @@ API Key 只保存在当前浏览器 `localStorage`。导出的 API 实例 JSON �
 2. 选择工作流：
    - **直接分镜模式**：剧情 → 分镜 → 绘画。
    - **演绎分镜模式**：剧情 → 演绎 → 多段并发分镜 → 错峰并发绘画。
-3. 设置页数、单个分镜 AI 页数和漫画文字语言。
+3. 设置页数、单个分镜 AI 页数和漫画文字语言。演绎模式默认使用 `1-3` 页/段：简单开场或收尾可用 1 页，战斗或转折密集段最多 3 页；也可以填写单独数字固定页数。
 4. 如有需要，配置剧情正则、MVU、参考图预设。
 5. 点击“生成并发分页漫画并插入末层”。
 
