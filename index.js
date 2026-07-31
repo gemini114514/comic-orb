@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.26.1';
+    const COMIC_ORB_VERSION = '1.27.0';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -67,10 +67,29 @@
 {"format":"comic-orb-character-cards","version":1,"cards":[{"name":"人物主名","aliases":["别名"],"description":"只含正文明确事实的紧凑人设描述"}]}`;
     const LEGACY_STORYBOARD_SYSTEM_PROMPT = '你是专业漫画分镜师。把剧情改写成一张漫画页的精确绘画提示词。明确画幅、分格、镜头、人物外观与位置、动作表情、场景、光影、对白框文字，并保持角色一致性。只输出可直接交给绘画模型的最终提示词，不要解释。';
     const LEGACY_STORYBOARD_TEST_PROMPT = '测试剧情：雨夜的车站里，少女发现远处站台有一个熟悉的人影。请把这段剧情整理成简洁、可直接用于绘画的漫画分镜提示词，并明确镜头、构图、人物动作和表情。';
+    const DEFAULT_COMIC_STYLE_PROFILE = Object.freeze({
+        source_work: '',
+        confidence: 'low',
+        basis: ['未识别到可靠的原作作品或画风线索'],
+        style_summary: '现代商业日式漫画：清晰可读的墨线与适度变化的线宽，稳定的角色比例，远中近景交替，动作方向和空间透视明确；默认全彩赛璐璐与轻度厚涂结合，用构图、速度线、明暗和环境色推进情绪。',
+        linework: '深色清晰线稿，轮廓明确，线宽随景别、材质和动作适度变化，避免糊成一团。',
+        character_design: '保持角色脸部、发色、发型、体型轮廓、服装和装备的跨格连续；表情和姿态可以有漫画化夸张，但不能凭空补造外貌。',
+        composition: '遵循自然阅读顺序，远景交代空间，中近景承载动作与反应，关键节拍用明确的主体关系、透视和留白突出。',
+        color_script: '默认全彩；人物固有色、环境主色和特效色跨格连续，明暗、冷暖和局部高光服务于剧情节奏。',
+        render_rules: ['动作因果和物理反馈清楚', '背景透视与人物站位可读', '跨页保持人物、装备、场景和色彩连续', '画风分析只约束视觉表现，不新增剧情事实'],
+        avoid: ['无关水印、乱码和装饰文字', '相邻页面无理由的画风漂移', '复制具体原作页面、分格或作者签名式标记'],
+    });
+    const COMIC_STYLE_ANALYSIS_SCHEMA = `{"source_work":"可靠识别到的原作或作品名；无法确认时为空字符串","confidence":"high|medium|low","basis":["识别依据或输入中出现的作品线索"],"style_summary":"一段可执行的高层画风总结","linework":"线条与勾线特征","character_design":"角色比例、造型与连续性要求","composition":"构图、景别与分格节奏","color_script":"色彩、明暗与跨页连续要求","render_rules":["正向执行规则"],"avoid":["需要避免的视觉漂移或无关元素"]}`;
+    const DEFAULT_STORYBOARD_STYLE_PROMPT = `你是漫画原作画风分析顾问。这个阶段只负责给分镜AI提供视觉语言，不改写剧情。
+先检查用户提供的标题、作品名或明确说明：若能可靠识别《为美好的世界献上祝福！》（素晴）、《刃牙》或其他漫画/动画作品，请写出source_work并提炼作品级的高层特征，包括线条与勾线、角色比例与造型倾向、构图和分格节奏、动作表现、明暗色彩、背景细节密度、对白框和拟声字的处理。只使用可执行的高层特征，不复制具体原作页面、分格、姿势、台词、素材或作者签名式笔触，也不要声称精确复刻某位作者。
+没有可靠原作线索时不要猜作品名，直接使用以下漫画球默认画风：${JSON.stringify(DEFAULT_COMIC_STYLE_PROFILE)}。
+输出的画风分析只允许约束视觉表现，不能新增人物、怪物、年龄、外貌、服装、道具、对白、事件或结局；输入与人设卡明确的事实优先。分镜AI必须把本分析作为唯一画风依据，写入global_style.source_style_analysis，并在每页page_prompt中沿用，不要在不同页面重新猜测另一套画风。建议输出字段：${COMIC_STYLE_ANALYSIS_SCHEMA}`;
     const DEFAULT_STORYBOARD_SYSTEM_PROMPT = `你是专业漫画分镜主笔。先精炼剧情并整理必要的静态视觉连续性，但不得续写输入范围之外的剧情事件，再输出可被程序解析并按页并发绘制的严格 JSON。只输出一个 JSON 对象，禁止 Markdown、代码块、解释、注释或 JSON 外文字。
 
 顶层结构必须为：
-{"schema_version":"comic_orb_storyboard_v1","language":"本次任务指定的漫画输出语言","title":"标题","refined_plot":"精炼剧情","global_style":{"visual_style":"全局画风","color_script":"配色与光影演进","render_rules":["规则"],"negative_prompt":["禁止事项"]},"characters":[{"id":"char_1","name":"角色名","role":"定位","appearance_lock":"脸部结构、发色、发型、身形比例等不可变可见特征","costume":"本段明确服装","costume_changes":["无或具体变化"]}],"entity_bible":[{"id":"可选稳定ID","name":"人物、怪物或重要道具名","kind":"character|creature|prop|vehicle|other","identity_traits":["来源剧情明确建立且不应漂移的特征"],"scale_relation":"可选的相对体型或尺寸","persistent_equipment":["可选的常驻装备及携带位置"],"state_changes":["按剧情顺序发生的损坏、丢弃、换装或伤势变化"]}],"pages":[PAGE]}
+{"schema_version":"comic_orb_storyboard_v1","language":"本次任务指定的漫画输出语言","title":"标题","refined_plot":"精炼剧情","global_style":{"source_work":"可靠识别到的原作名，无则空字符串","source_style_analysis":{"source_work":"","confidence":"high|medium|low","basis":[],"style_summary":"高层画风总结","linework":"线条特征","character_design":"角色造型连续性","composition":"构图与分格节奏","color_script":"色彩与明暗","render_rules":[],"avoid":[]},"visual_style":"全局画风","color_script":"配色与光影演进","render_rules":["规则"],"negative_prompt":["禁止事项"]},"characters":[{"id":"char_1","name":"角色名","role":"定位","appearance_lock":"脸部结构、发色、发型、身形比例等不可变可见特征","costume":"本段明确服装","costume_changes":["无或具体变化"]}],"entity_bible":[{"id":"可选稳定ID","name":"人物、怪物或重要道具名","kind":"character|creature|prop|vehicle|other","identity_traits":["来源剧情明确建立且不应漂移的特征"],"scale_relation":"可选的相对体型或尺寸","persistent_equipment":["可选的常驻装备及携带位置"],"state_changes":["按剧情顺序发生的损坏、丢弃、换装或伤势变化"]}],"pages":[PAGE]}
+
+若启用了独立的“原作画风提示词”，它是本次唯一的画风依据：按该提示词完成一次高层分析，写入global_style.source_style_analysis，并让每个page_prompt沿用；未启用时不要求额外确认作品画风，只遵守输入中明确的视觉事实和默认全彩规则。
 
 每个 PAGE 必须包含：page（从1连续编号）、page_goal、highlight、layout、climax_panel、continuity_in、continuity_out、page_prompt、panels。
 每个 panels 必须是2到6项的数组。每个 panel 必须包含全部字段：panel（从1连续编号）、size（small/medium/large/half_page/full_width）、shape（rectangular/narrow/diagonal/irregular）、purpose、shot、composition、scene、action、expression、effects数组、dialogue数组（元素为 type/speaker/text/visual_anchor 对象，type为speech/thought/narration）、sfx数组、color_style、continuity。无对白或SFX时用空数组，禁止省略或写null。
@@ -444,6 +463,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             maxOutputTokens: 65536, maxOutputTokenField: 'auto', reasoningEffort: 'low', thinkingMode: 'default',
             testPrompt: DEFAULT_STORYBOARD_TEST_PROMPT,
             systemPrompt: DEFAULT_STORYBOARD_SYSTEM_PROMPT,
+            stylePromptEnabled: true,
+            stylePrompt: DEFAULT_STORYBOARD_STYLE_PROMPT,
             adaptationPrompt: DEFAULT_ADAPTATION_SYSTEM_PROMPT,
             extraBody: '{}', extraHeaders: '{}', temporarySession: true, minPages: 1, maxPages: 2, minPanels: 2, maxPanels: 6
         },
@@ -558,6 +579,16 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     initializeApiProfiles('adaptation');
     initializeApiProfiles('storyboard');
     initializeApiProfiles('drawing');
+    if (!settings.migrations.independentStoryboardStylePromptV1) {
+        settings.storyboard.stylePromptEnabled = settings.storyboard.stylePromptEnabled !== false;
+        settings.storyboard.stylePrompt = String(settings.storyboard.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT);
+        settings.apiProfiles.storyboard.forEach(profile => {
+            if (!profile?.config) return;
+            if (!Object.prototype.hasOwnProperty.call(profile.config, 'stylePromptEnabled')) profile.config.stylePromptEnabled = settings.storyboard.stylePromptEnabled;
+            if (!String(profile.config.stylePrompt || '').trim()) profile.config.stylePrompt = settings.storyboard.stylePrompt;
+        });
+        settings.migrations.independentStoryboardStylePromptV1 = true;
+    }
     ensureLocalGeminiDrawingProfile();
     initializePromptPresets('adaptation');
     initializePromptPresets('storyboard');
@@ -2147,7 +2178,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         });
         const normalizedPrompt = upgradeStoryboardClosedWorld(conf.systemPrompt).replace(STORYBOARD_CLOSED_WORLD_RULE, '').trim();
         const adultIdentityRule = '\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判：不得因此改变参考图脸型、身形比例、体态、服装、身体动态或原剧情镜头，也不得把角色画得更老。最终JSON不写具体年龄、“成年”等年龄声明或任何低龄/学龄称谓。上游被剔除的冲突年龄元数据不得重新猜回。';
-        const effectiveSystemPrompt = `${normalizedPrompt}\n\n【漫画球本次实际校验范围】pages 必须为 ${limits.pages.min}-${limits.pages.max} 页；每页 panels 必须为 ${limits.panels.min}-${limits.panels.max} 格。此处为程序最终采用的范围，若前文存在旧范围，以此处为准。范围只规定合法上下限，并不要求选择最大值；在不低于最小值的前提下按原剧情实际密度选择最少且足够的页数与格数。\n【漫画球对白改编与证据规则】对白数量和覆盖率完全自由；允许整页无对白、只用拟声字或只保留一句关键台词，禁止为了覆盖格数硬塞对白、内心独白或旁白。若前文存在最低对白数量或覆盖比例要求，以本段自由规则为准。保留原剧情意图、关系和角色口吻，但禁止机械照抄小说原句；允许删、并、重排和重写。存在dialogue时只使用 {"type":"speech|thought|narration","speaker":"角色名","text":"漫画实际显示文字","visual_anchor":"能直接证明本句事实的当前格可见证据"}。visual_anchor不是说话者位置，也不是随便找一个可见物；它必须直接支撑text中的对象、地点或判断。例如“工地有推土机”需要工地路牌/地图/可见工地，方向盘不算；“过桥就到我家”需要地图、路标或可见庄园地标，残骸不算；“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。无法提供证据时，必须改写text使它只陈述当前画面能证明的内容，或修改panel补入证据。page_prompt逐字包含实际采用的text和框体类型，并完整描述证据画面；visual_anchor允许同义改写。\n【漫画球本地化硬规则】本次漫画输出语言为“${outputLanguage}”。顶层 language 必须逐字写成“${outputLanguage}”。所有 dialogue.text、旁白、内心独白、拟声字、标牌及画内可读文字使用该语言；专有名词只保留必要原文或缩写，不得擅自切换主要语言。page_prompt必须要求绘画模型逐字照抄该语言文本，禁止把speech/thought/narration渲染成Normal、Interior thoughts等可见标签。\n【漫画球色彩硬规则】默认全彩，并让每页page_prompt重申global_style.color_script中的环境色、人物固有色和特效色。黑白服装不等于黑白画面。只有剧情明确需要回忆、冲击瞬间或主观情绪强调时，才允许指定单格临时变调；内容降级与合规转换不得改变整页或跨页色调。\n【漫画球可选实体设定】entity_bible是软约束且完全可选，不属于程序校验条件。存在跨页人物、怪物、载具或关键道具时，可简洁记录稳定身份、数量特征、相对体型、常驻装备及明确状态变化；纯景色、一次性场景或无需连续实体时可省略或留空。收到上游entity_bible时尽量沿用，不因措辞或拼写小差异重复创建实体；只把本页实际出现实体的相关锁定自然写入page_prompt，不要向景色页强行添加角色。即使entity_bible缺字段、名称拼写不统一或局部矛盾，也应凭剧情常识继续完成分镜，禁止因此拒绝输出或等待修订。\n【漫画球外貌事实保真】角色的发色、发型、瞳色、肤色、体型、服装及其他永久外貌只能来自本次输入或上游entity_bible明确给出的事实。没有提供的项目保持未指定，不得依据姓名、种族、职业、世界观或常见二次元形象自行补全。未知外貌时仍要把分镜写具体：使用角色名、身份、动作、表情、朝向、站位、互动对象、已知装备和环境关系描述，但不要添加任何未知外貌；characters对应字段允许留空或写“未指定”。\n\n${STORYBOARD_GAZE_RULE}${adultIdentityRule}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
+        const stylePromptRule = conf.stylePromptEnabled === false
+            ? '【独立原作画风提示词】已关闭；不要要求演绎AI或分镜AI额外确认作品画风，只遵守输入中明确的视觉事实、角色连续性和默认全彩规则。'
+            : `【独立原作画风提示词——唯一画风依据】${String(conf.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT).trim()}`;
+        const effectiveSystemPrompt = `${normalizedPrompt}\n\n【漫画球本次实际校验范围】pages 必须为 ${limits.pages.min}-${limits.pages.max} 页；每页 panels 必须为 ${limits.panels.min}-${limits.panels.max} 格。此处为程序最终采用的范围，若前文存在旧范围，以此处为准。范围只规定合法上下限，并不要求选择最大值；在不低于最小值的前提下按原剧情实际密度选择最少且足够的页数与格数。\n【漫画球对白改编与证据规则】对白数量和覆盖率完全自由；允许整页无对白、只用拟声字或只保留一句关键台词，禁止为了覆盖格数硬塞对白、内心独白或旁白。若前文存在最低对白数量或覆盖比例要求，以本段自由规则为准。保留原剧情意图、关系和角色口吻，但禁止机械照抄小说原句；允许删、并、重排和重写。存在dialogue时只使用 {"type":"speech|thought|narration","speaker":"角色名","text":"漫画实际显示文字","visual_anchor":"能直接证明本句事实的当前格可见证据"}。visual_anchor不是说话者位置，也不是随便找一个可见物；它必须直接支撑text中的对象、地点或判断。例如“工地有推土机”需要工地路牌/地图/可见工地，方向盘不算；“过桥就到我家”需要地图、路标或可见庄园地标，残骸不算；“渣滓们滚开”需要被碾压的尸潮，驾驶者不算。无法提供证据时，必须改写text使它只陈述当前画面能证明的内容，或修改panel补入证据。page_prompt逐字包含实际采用的text和框体类型，并完整描述证据画面；visual_anchor允许同义改写。\n【漫画球本地化硬规则】本次漫画输出语言为“${outputLanguage}”。顶层 language 必须逐字写成“${outputLanguage}”。所有 dialogue.text、旁白、内心独白、拟声字、标牌及画内可读文字使用该语言；专有名词只保留必要原文或缩写，不得擅自切换主要语言。page_prompt必须要求绘画模型逐字照抄该语言文本，禁止把speech/thought/narration渲染成Normal、Interior thoughts等可见标签。\n【漫画球色彩硬规则】默认全彩，并让每页page_prompt重申global_style.color_script中的环境色、人物固有色和特效色。黑白服装不等于黑白画面。只有剧情明确需要回忆、冲击瞬间或主观情绪强调时，才允许指定单格临时变调；内容降级与合规转换不得改变整页或跨页色调。\n【漫画球可选实体设定】entity_bible是软约束且完全可选，不属于程序校验条件。存在跨页人物、怪物、载具或关键道具时，可简洁记录稳定身份、数量特征、相对体型、常驻装备及明确状态变化；纯景色、一次性场景或无需连续实体时可省略或留空。收到上游entity_bible时尽量沿用，不因措辞或拼写小差异重复创建实体；只把本页实际出现实体的相关锁定自然写入page_prompt，不要向景色页强行添加角色。即使entity_bible缺字段、名称拼写不统一或局部矛盾，也应凭剧情常识继续完成分镜，禁止因此拒绝输出或等待修订。\n【漫画球外貌事实保真】角色的发色、发型、瞳色、肤色、体型、服装及其他永久外貌只能来自本次输入或上游entity_bible明确给出的事实。没有提供的项目保持未指定，不得依据姓名、种族、职业、世界观或常见二次元形象自行补全。未知外貌时仍要把分镜写具体：使用角色名、身份、动作、表情、朝向、站位、互动对象、已知装备和环境关系描述，但不要添加任何未知外貌；characters对应字段允许留空或写“未指定”。\n\n${STORYBOARD_GAZE_RULE}${adultIdentityRule}\n\n${stylePromptRule}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
         const characterOverrideRule = normalizeCharacterCards(options.characterCards).length
             ? '\n\n【用户人设卡最高优先级】用户消息末尾的 comic_orb_character_cards 是人工确认的覆盖层，不是剧情。正文、MVU、上游 entity_bible、模型常识与它冲突时，必须采用卡内事实；未知字段保持未指定。把相关人物的稳定事实写进 characters、可选 entity_bible 与 page_prompt，但不得因此新增人物、事件或镜头。'
             : '';
@@ -2557,6 +2591,41 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (layoutMatch) return Number(layoutMatch[1]);
         return 0;
     }
+    function normalizeSourceStyleAnalysis(value) {
+        const input = typeof value === 'string' ? { style_summary: value } : (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+        const text = (key, fallback = '') => String(input[key] ?? fallback).trim();
+        const list = (key, fallback = []) => Array.isArray(input[key]) ? input[key].map(item => String(item || '').trim()).filter(Boolean).slice(0, 12) : [...fallback];
+        const sourceWork = text('source_work');
+        const confidence = ['high', 'medium', 'low'].includes(text('confidence')) ? text('confidence') : (sourceWork ? 'medium' : DEFAULT_COMIC_STYLE_PROFILE.confidence);
+        return {
+            source_work: sourceWork,
+            confidence,
+            basis: list('basis', sourceWork ? [`输入或标题明确提到${sourceWork}`] : DEFAULT_COMIC_STYLE_PROFILE.basis),
+            style_summary: text('style_summary', text('summary', DEFAULT_COMIC_STYLE_PROFILE.style_summary)) || DEFAULT_COMIC_STYLE_PROFILE.style_summary,
+            linework: text('linework', DEFAULT_COMIC_STYLE_PROFILE.linework) || DEFAULT_COMIC_STYLE_PROFILE.linework,
+            character_design: text('character_design', DEFAULT_COMIC_STYLE_PROFILE.character_design) || DEFAULT_COMIC_STYLE_PROFILE.character_design,
+            composition: text('composition', DEFAULT_COMIC_STYLE_PROFILE.composition) || DEFAULT_COMIC_STYLE_PROFILE.composition,
+            color_script: text('color_script', DEFAULT_COMIC_STYLE_PROFILE.color_script) || DEFAULT_COMIC_STYLE_PROFILE.color_script,
+            render_rules: list('render_rules', DEFAULT_COMIC_STYLE_PROFILE.render_rules),
+            avoid: list('avoid', DEFAULT_COMIC_STYLE_PROFILE.avoid),
+        };
+    }
+    function normalizeStoryboardGlobalStyle(value) {
+        const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+        const analysisInput = input.source_style_analysis && typeof input.source_style_analysis === 'object'
+            ? input.source_style_analysis
+            : { source_work: input.source_work, style_summary: input.visual_style, color_script: input.color_script, render_rules: input.render_rules, avoid: input.negative_prompt };
+        const analysis = normalizeSourceStyleAnalysis(analysisInput);
+        return {
+            ...input,
+            source_work: String(input.source_work || analysis.source_work || '').trim(),
+            source_style_analysis: analysis,
+            visual_style: String(input.visual_style || analysis.style_summary).trim() || analysis.style_summary,
+            color_script: String(input.color_script || analysis.color_script).trim() || analysis.color_script,
+            render_rules: Array.isArray(input.render_rules) && input.render_rules.length ? input.render_rules : analysis.render_rules,
+            negative_prompt: Array.isArray(input.negative_prompt) ? input.negative_prompt : analysis.avoid,
+        };
+    }
     function parseStoryboardPlan(raw, conf = settings.storyboard, outputLanguage = settings.outputLanguage, limitsOverride = null) {
         const parsed = parseModelJson(raw, '分镜');
         const expectedLanguage = normalizeOutputLanguage(outputLanguage);
@@ -2570,6 +2639,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         plan.schema_version = 'comic_orb_storyboard_v1';
         plan.language = expectedLanguage;
         if (!String(plan.title || '').trim()) plan.title = '未命名漫画';
+        if (conf.stylePromptEnabled !== false) plan.global_style = normalizeStoryboardGlobalStyle(plan.global_style);
         if (pages.length < limits.pages.min || pages.length > limits.pages.max) errors.push(`pages 数量必须为 ${limits.pages.min}-${limits.pages.max}，实际为 ${pages.length}`);
         pages.forEach((page, pageIndex) => {
             const pageNo = pageIndex + 1; let panels = page?.panels;
@@ -3476,7 +3546,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>默认每页最少格数</span><input id="sb-min-panels" type="number" min="1" max="20" value="${esc(settings.storyboard.minPanels)}"></label>
             <label class="co-field"><span>默认每页最多格数</span><input id="sb-max-panels" type="number" min="1" max="20" value="${esc(settings.storyboard.maxPanels)}"></label>
             <div class="co-callout co-full">页数与格数不再硬编码。系统提示词中的明确范围（例如“pages只能有1到5页”“每页panels为1到5格”）会覆盖上面的默认值；最可靠的写法是在提示词单独加入 <code>comic_orb_limits: {"pages":[1,5],"panels":[1,5]}</code>。支持1-20页、每页1-20格。脚本仍会检查连续编号、必填字段、高潮格、page_prompt 和所有跨页 continuity。</div>
-            <div class="co-full">${promptPresetManager('sb', 'storyboard')}<label class="co-field"><span>分镜系统提示词</span><textarea id="sb-system">${esc(settings.storyboard.systemPrompt)}</textarea></label></div>
+            <div class="co-full">${promptPresetManager('sb', 'storyboard')}<label class="co-field"><span>分镜系统提示词（剧情与结构）</span><textarea id="sb-system">${esc(settings.storyboard.systemPrompt)}</textarea></label></div>
+            <label class="co-check co-full" title="启用后，下面的独立画风提示词是分镜 AI 唯一采用的画风依据；演绎 AI 不会确认或生成画风信息。"><input id="sb-style-enabled" type="checkbox" ${settings.storyboard.stylePromptEnabled !== false ? 'checked' : ''}>启用独立原作画风分析提示词</label>
+            <label class="co-field co-full"><span>原作画风提示词（独立设置）</span><textarea id="sb-style-prompt" placeholder="可填写作品名识别与默认画风规则">${esc(settings.storyboard.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT)}</textarea><small>启用时仅此处决定线条、角色造型、构图节奏、色彩与渲染风格；分镜系统提示词、演绎结果和剧情正文不能覆盖它。关闭后不会额外要求 AI 确认原作画风。</small></label>
             <label class="co-field co-full"><span>额外请求体 JSON（可覆盖默认字段）</span><textarea id="sb-extra">${esc(settings.storyboard.extraBody)}</textarea></label>
             <label class="co-field co-full"><span>API 测试提示词（只在点击测试时使用）</span><textarea id="sb-test-prompt">${esc(settings.storyboard.testPrompt)}</textarea></label>
             <div class="co-full co-api-actions"><button class="co-mini co-test" id="sb-test" type="button">测试并校验 JSON</button><span class="co-api-status" id="sb-api-status">尚未测试</span></div>
@@ -3654,7 +3726,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (kind !== 'drawing') {
             set('temperature', conf.temperature); set('max-output-tokens', conf.maxOutputTokens ?? 65536); set('max-output-token-field', conf.maxOutputTokenField || 'auto'); set('reasoning-effort', conf.reasoningEffort || 'low'); set('thinking-mode', conf.thinkingMode || 'default'); set('system', conf.systemPrompt);
             if (kind === 'adaptation') set('storyboard-interval', normalizeStoryboardLaunchInterval(conf.storyboardLaunchIntervalMs));
-            if (kind === 'storyboard') { set('min-pages', conf.minPages); set('max-pages', conf.maxPages); set('min-panels', conf.minPanels); set('max-panels', conf.maxPanels); }
+            if (kind === 'storyboard') {
+                set('min-pages', conf.minPages); set('max-pages', conf.maxPages); set('min-panels', conf.minPanels); set('max-panels', conf.maxPanels);
+                set('style-prompt', conf.stylePrompt || DEFAULT_STORYBOARD_STYLE_PROMPT);
+                const styleEnabled = root.querySelector('#sb-style-enabled'); if (styleEnabled) styleEnabled.checked = conf.stylePromptEnabled !== false;
+            }
         }
         else {
             set('mode', conf.mode); set('size', conf.size); set('quality', conf.quality); set('output-format', conf.outputFormat);
@@ -4035,7 +4111,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.storage.maxCacheMb = normalizeMaxCacheMb(val('co-cache-max-mb'));
         settings.storage.autoCleanup = checked('co-cache-auto-cleanup');
         settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary'), storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(val('ad-storyboard-interval')) };
-        settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
+        settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), stylePromptEnabled: checked('sb-style-enabled'), stylePrompt: val('sb-style-prompt') || DEFAULT_STORYBOARD_STYLE_PROMPT, testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
         settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs'), enforceGoogleOfficialResolution: checked('dr-google-resolution-limit') };
         save();
     }

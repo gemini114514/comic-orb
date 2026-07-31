@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.26.1/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.27.0/diagnose.js');
 await doctor.download();
 ```
 
@@ -98,6 +98,8 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 - 单独填写测试提示词；
 - 保存提示词预设；
 - 配置额外请求头和请求体。
+
+分镜 API 页面另外提供了独立的“原作画风提示词”和启用开关。开关开启时，这段提示词是分镜 AI 唯一采用的画风来源：它会先识别输入里明确出现的作品（例如《为美好的世界献上祝福！》（素晴）、《刃牙》），再提炼作品级的线条、角色比例、构图节奏、动作表现、色彩与背景特征；没有可靠作品线索时使用漫画球默认画风。画风只作为视觉约束，不复制具体原作页面、分格或作者签名式笔触，也不会新增剧情。演绎 API 不参与画风确认，演绎结果只负责剧情提炼与分段。关闭开关后，分镜 AI 不会额外确认原作画风，只遵守剧情中明确的视觉事实。
 
 绘画设置中的“应用 Google 官方分辨率限制”默认启用。使用 Gemini 3.1 Flash/Lite Image、Gemini 3 Pro Image 或 Gemini 2.5 Flash Image 时，漫画球会按用户输入的宽高比例自动选择最接近的官方比例与合法分辨率档位；OpenAI 兼容 Generations、带参考图的 Edits 和 Gemini 原生协议都会应用，并在界面和本地日志中显示规范结果。非 Gemini 图片模型不会被修改。
 
