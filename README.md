@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.27.1/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.27.2/diagnose.js');
 await doctor.download();
 ```
 
@@ -223,7 +223,7 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.25.7`
+当前版本：`1.27.2`
 
 ### TT 酒馆与代码渲染兼容
 

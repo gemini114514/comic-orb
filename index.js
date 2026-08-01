@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.27.1';
+    const COMIC_ORB_VERSION = '1.27.2';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -1044,6 +1044,43 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function autoRetryPolicy(value = settings.autoRetry) {
         return normalizeAutoRetry(value);
     }
+    function liveExecutionControls() {
+        return {
+            batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
+            storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
+            autoRetry: normalizeAutoRetry(settings.autoRetry),
+            debugEnabled: Boolean(settings.debug.enabled),
+        };
+    }
+    function applyLiveExecutionControls(snapshot = {}) {
+        const live = liveExecutionControls();
+        return {
+            ...snapshot,
+            ...live,
+            adaptationConf: {
+                ...(snapshot.adaptationConf || {}),
+                storyboardLaunchIntervalMs: live.storyboardLaunchIntervalMs,
+                autoRetry: clone(live.autoRetry),
+            },
+            storyboardConf: { ...(snapshot.storyboardConf || {}), autoRetry: clone(live.autoRetry) },
+            drawingConf: { ...(snapshot.drawingConf || {}), autoRetry: clone(live.autoRetry) },
+        };
+    }
+    function withoutCachedExecutionControls(job = {}) {
+        const saved = clone(job);
+        if (!saved?.execution || typeof saved.execution !== 'object') return saved;
+        delete saved.execution.batchDrawingIntervalMs;
+        delete saved.execution.storyboardLaunchIntervalMs;
+        delete saved.execution.autoRetry;
+        delete saved.execution.debugEnabled;
+        for (const key of ['adaptationConf', 'storyboardConf', 'drawingConf']) {
+            if (saved.execution[key] && typeof saved.execution[key] === 'object') delete saved.execution[key].autoRetry;
+        }
+        if (saved.execution.adaptationConf && typeof saved.execution.adaptationConf === 'object') {
+            delete saved.execution.adaptationConf.storyboardLaunchIntervalMs;
+        }
+        return saved;
+    }
     function isAutoRetryableError(error, policy = settings.autoRetry) {
         if (isCanceledError(error)) return false;
         if (autoRetryPolicy(policy).mode === 'full') return true;
@@ -1194,7 +1231,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
     }
     async function providerApiFetch(conf, url, options, operation = 'API 请求', validateResponse = null) {
-        const retryOptions = conf?.autoRetry || settings.autoRetry;
+        const retryOptions = settings.autoRetry;
         if (backendModeFor(conf) !== 'full' || !shouldRelayProviderRequest(url)) return apiFetch(url, options, operation, validateResponse, retryOptions);
         await requireServerPluginReady();
         const requestHeaders = Object.fromEntries(new Headers(options?.headers || {}).entries());
@@ -1886,7 +1923,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 version: 1,
                 kind,
                 savedAt: new Date().toISOString(),
-                job: clone(job),
+                job: withoutCachedExecutionControls(job),
                 checkpoint: serializeWorkflowCheckpoint(checkpoint),
                 process: process ? {
                     id: process.id,
@@ -1930,7 +1967,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                     continue;
                 }
                 if (workflowCheckpoints.has(record.job.id)) continue;
-                const job = Object.freeze(record.job);
+                const sanitizedJob = withoutCachedExecutionControls(record.job);
+                const job = Object.freeze(sanitizedJob);
+                record.job = clone(sanitizedJob);
+                try { await workflowRecordPut(record); }
+                catch (migrationError) { queueLog('error', '后台工作流实时参数迁移写回失败', { taskId: job.id, result: migrationError.message }); }
                 const checkpoint = await hydrateWorkflowCheckpoint(record.checkpoint || {}, job);
                 let processId = String(record.process?.id || checkpoint.processId || newId());
                 if (remoteProcesses.some(item => item.id === processId)) processId = newId();
@@ -2097,7 +2138,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const conf = settings[kind];
             const endpoint = modelsEndpoint(conf);
             const validateModelsResponse = value => {
-                const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+                const retryPolicy = autoRetryPolicy(settings.autoRetry);
                 if (!retryPolicy.enabled || retryPolicy.mode !== 'full') return;
                 const candidateList = Array.isArray(value?.data) ? value.data : Array.isArray(value?.models) ? value.models : Array.isArray(value) ? value : [];
                 if (!candidateList.length) {
@@ -2203,7 +2244,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
         const validateStoryboardResponse = value => {
             validateTextApiPayload(value, '分镜 API ', body);
-            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            const retryPolicy = autoRetryPolicy(settings.autoRetry);
             if (retryPolicy.enabled && retryPolicy.mode === 'full') parseStoryboardPlan(extractApiResponseText(value), conf, outputLanguage, limits, inheritedStyle);
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '分镜 API 测试' : '分镜生成', validateStoryboardResponse);
@@ -2229,7 +2270,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
         const validateRegexResponse = value => {
             validateTextApiPayload(value, 'AI 正则助手 ', body);
-            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            const retryPolicy = autoRetryPolicy(settings.autoRetry);
             if (retryPolicy.enabled && retryPolicy.mode === 'full') validateRegexList(parseModelJson(extractApiResponseText(value), 'AI 正则助手'));
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 正则助手 · 分镜 API', validateRegexResponse);
@@ -2264,7 +2305,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
         const validateCharacterResponse = value => {
             validateTextApiPayload(value, 'AI 人设整理 ', body);
-            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            const retryPolicy = autoRetryPolicy(settings.autoRetry);
             if (retryPolicy.enabled && retryPolicy.mode === 'full') parseCharacterCardsPayload(extractApiResponseText(value));
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, 'AI 人设整理 · 分镜 API', validateCharacterResponse);
@@ -2321,7 +2362,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const endpoint = normalizeEndpoint(conf.baseUrl, conf.path);
         const validateAdaptationResponse = value => {
             validateTextApiPayload(value, '演绎 API ', body);
-            const retryPolicy = autoRetryPolicy(conf.autoRetry || settings.autoRetry);
+            const retryPolicy = autoRetryPolicy(settings.autoRetry);
             if (retryPolicy.enabled && retryPolicy.mode === 'full') parseAdaptationPlan(extractApiResponseText(value), outputLanguage, totalPageRange, workerPageRange, stylePromptEnabled);
         };
         const data = await providerApiFetch(conf, endpoint, { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '演绎 API 测试' : '剧情演绎', validateAdaptationResponse);
@@ -2467,7 +2508,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         onStage('storyboard', { adaptation });
         const retainedSegments = checkpoint?.segmentResults || new Map();
-        const staggerMs = normalizeStoryboardLaunchInterval(execution.storyboardLaunchIntervalMs ?? execution.adaptationConf?.storyboardLaunchIntervalMs);
+        const staggerMs = normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs);
         const controller = new AbortController(); let primaryFailure = null; let primaryFailureSegment = null;
         if (signal) {
             if (signal.aborted) controller.abort(signal.reason);
@@ -2947,7 +2988,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const optional = { ...imageApiOptions(conf, true), ...extras };
         if (resolution.applied) delete optional.size;
         for (const [key, value] of Object.entries(optional)) form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
-        const data = await apiFetch(drawingEndpoint(conf, 'edits'), { method: 'POST', headers: apiHeaders(conf, true), body: form, signal: options.signal }, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits，${activeRefs.length} 张参考图）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
+        const data = await apiFetch(drawingEndpoint(conf, 'edits'), { method: 'POST', headers: apiHeaders(conf, true), body: form, signal: options.signal }, options.test ? '绘画 API 测试（Edits）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Edits，${activeRefs.length} 张参考图）`, validateDrawingPayload, settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
     }
     async function callDrawingThroughLocalProxy(conf, protocol, fields, referenceList, options = {}) {
@@ -2962,7 +3003,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             references: referenceList.map((reference, index) => ({ dataUrl: reference.dataUrl, name: reference.name || `reference-${index + 1}.png` })),
         };
         const localHeaders = { ...context().getRequestHeaders(), ...(conf.apiKey ? { 'X-Comic-Orb-Api-Key': conf.apiKey } : {}) };
-        const data = await apiFetch(`${SERVER_PLUGIN_API}/image`, { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
+        const data = await apiFetch(`${SERVER_PLUGIN_API}/image`, { method: 'POST', headers: localHeaders, body: JSON.stringify(payload), signal: options.signal }, operation, validateDrawingPayload, settings.autoRetry);
         return drawingResult(data, conf, fields.prompt, options);
     }
     async function callDrawing(prompt, options = {}) {
@@ -3013,7 +3054,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         logGoogleDrawingResolution(resolution, conf, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`);
         if (drawingUsesLocalProxy(conf)) return callDrawingThroughLocalProxy(conf, 'generations', body, [], options);
-        const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload, conf.autoRetry || settings.autoRetry);
+        const data = await apiFetch(drawingEndpoint(conf, 'generations'), { method: 'POST', headers: apiHeaders(conf), body: JSON.stringify(body), signal: options.signal }, options.test ? '绘画 API 测试（Generations）' : `绘画生成 · 第 ${options.pageNumber || 1} 页（Generations）`, validateDrawingPayload, settings.autoRetry);
         return drawingResult(data, conf, finalPrompt, options);
     }
     function abortableDelay(ms, signal) {
@@ -3028,7 +3069,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     async function drawStoryboardPages(plan, cacheMeta = {}, execution = {}) {
         const started = performance.now();
         const debugEnabled = execution.debugEnabled ?? settings.debug.enabled;
-        const staggerMs = normalizeBatchDrawingInterval(execution.batchDrawingIntervalMs);
+        const staggerMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
         const retainedResults = execution.checkpoint?.drawingResults || new Map();
         const batchController = new AbortController();
         let primaryFailure = null; let primaryFailurePage = null;
@@ -3353,17 +3394,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             range: String(settings.range), includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
-            batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
-            storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            autoRetry: clone(settings.autoRetry),
             characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
-            adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
+            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
-            insert: clone(settings.insert), storage: clone(settings.storage), debugEnabled: Boolean(settings.debug.enabled),
+            insert: clone(settings.insert), storage: clone(settings.storage),
         };
     }
     function requireProductionContext(job) {
@@ -3380,7 +3418,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!checkpoint.processId) checkpoint.processId = startRemoteProcess(`漫画任务 #${job.shortId} · 等待开始`, { method: 'WORKFLOW', url: `chat:${job.chatId || 'current'}/floor:${job.targetFloor}` });
         workflowCheckpoints.set(job.id, checkpoint);
         const processId = checkpoint.processId;
-        const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
+        const signal = remoteProcessSignal(processId); const execution = applyLiveExecutionControls({ ...job.execution, signal, checkpoint });
         execution.persistCheckpoint = () => persistWorkflowCheckpoint('production', job, checkpoint);
         await execution.persistCheckpoint();
         try {
@@ -3558,7 +3596,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="adaptation">${apiProfileManager('ad', 'adaptation')}<div class="co-grid">
             ${apiFields('ad', settings.adaptation)}
             <label class="co-check co-full" title="仅对 Base URL 为本地 127.0.0.1:4981/openai 或 localhost:4981/openai 的 gemini-web-to-api 生效。"><input id="ad-temporary" type="checkbox" ${settings.adaptation.temporarySession !== false ? 'checked' : ''}>本地 Gemini Web 使用匿名/临时会话（不保存到网页对话历史）</label>
-            <label class="co-field co-full"><span>演绎完成后并发分镜启动间隔（ms，最低 100）</span><input id="ad-storyboard-interval" type="number" min="100" max="2147483647" step="100" value="${esc(normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs))}"><small>第一个分镜立即启动，后续分镜按此间隔错峰发出；默认 300ms。只影响演绎分镜模式，不影响直接分镜和绘画分页间隔。</small></label>
+            <label class="co-field co-full"><span>演绎完成后并发分镜启动间隔（ms，最低 100）</span><input id="ad-storyboard-interval" type="number" min="100" max="2147483647" step="100" value="${esc(normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs))}"><small>分镜调度开始时读取当前值，暂停或缓存任务重试同样使用最新设置。第一个分镜立即启动，后续分镜按此间隔错峰发出；默认 300ms。只影响演绎分镜模式。</small></label>
             <label class="co-field"><span>Temperature</span><input id="ad-temperature" type="number" min="0" max="2" step="0.1" value="${esc(settings.adaptation.temperature)}"></label>
             <label class="co-field"><span>最大输出 Token</span><input id="ad-max-output-tokens" type="number" min="0" max="1048576" step="1" value="${esc(settings.adaptation.maxOutputTokens ?? 65536)}"></label>
             <label class="co-field"><span>输出上限参数名</span><select id="ad-max-output-token-field"><option value="auto" ${settings.adaptation.maxOutputTokenField === 'auto' || !settings.adaptation.maxOutputTokenField ? 'selected' : ''}>自动选择</option><option value="max_tokens" ${settings.adaptation.maxOutputTokenField === 'max_tokens' ? 'selected' : ''}>max_tokens</option><option value="max_completion_tokens" ${settings.adaptation.maxOutputTokenField === 'max_completion_tokens' ? 'selected' : ''}>max_completion_tokens</option></select></label>
@@ -3618,7 +3656,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page" data-page="settings">
             <div class="co-callout"><strong>基础模式与完整模式</strong><br>基础模式安装扩展后立即可用，API 请求由当前浏览器直接发送；约 300 秒以上的请求可能被浏览器、酒馆入口或中间代理断开，并取决于 API 是否允许浏览器跨域。完整模式通过酒馆主机上的服务端组件中继，支持最长 1800 秒、参考图 Multipart 和取消上游请求。模式会随每个后台任务冻结，运行中切换不会改变已经提交的任务。</div>
             <div class="co-profile-manager co-retry-panel ${settings.autoRetry.enabled ? 'enabled' : 'disabled'}" id="co-auto-retry-panel">
-              <label class="co-check co-debug-toggle" title="默认关闭。启用后，当前重试档位、次数和间隔会随每个新任务冻结；不会改变已经运行的任务。"><input id="co-auto-retry-enabled" type="checkbox" ${settings.autoRetry.enabled ? 'checked' : ''}>启用自动重试模式（默认关闭）</label>
+              <label class="co-check co-debug-toggle" title="默认关闭。当前重试档位、次数和间隔会在每次 API 调用开始时读取；暂停或缓存任务重试时也使用最新设置。"><input id="co-auto-retry-enabled" type="checkbox" ${settings.autoRetry.enabled ? 'checked' : ''}>启用自动重试模式（默认关闭）</label>
               <div class="co-grid">
                 <label class="co-field" title="有限重试只处理网络、超时、429和可恢复5xx；全自动除用户Cancel外，任何API或响应校验错误都会重试。"><span>工作档位</span><select id="co-auto-retry-mode" ${settings.autoRetry.enabled ? '' : 'disabled'}><option value="limited" ${settings.autoRetry.mode !== 'full' ? 'selected' : ''}>有限重试</option><option value="full" ${settings.autoRetry.mode === 'full' ? 'selected' : ''}>全自动重试</option></select></label>
                 <label class="co-field" title="首次请求失败后最多再次调用多少次；允许1到100次。"><span>重试次数（1–100）</span><input id="co-auto-retry-count" type="number" min="1" max="100" step="1" value="${esc(settings.autoRetry.maxRetries)}" ${settings.autoRetry.enabled ? '' : 'disabled'}></label>
@@ -3634,7 +3672,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-check co-debug-toggle"><input id="co-preflight-neutralize" type="checkbox" ${settings.preflightNeutralize ? 'checked' : ''}>启用 API 发送前中性措辞清洗（默认关闭，仅用于输入外审过严的平台）</label>
             <div class="co-callout">关闭时，演绎与直接分镜 API 会收到剧情正则及 MVU 处理后的原文；开启时，只对本次 API 请求副本中的少量直白评价和写实组织措辞做等义替换，不修改酒馆正文、缓存或检查点。该开关会随后台任务快照冻结。</div>
             <div class="co-callout">MVU 数据永远在剧情正则完成后追加。多楼层优先发送“首个剧情楼完整基线 + 后续剧情楼 JSON Patch 增量”；无法可靠读取历史时只发送末楼当前快照。直接分镜模式只交给分镜 AI 一次；演绎分镜模式只交给演绎 AI 一次，后续并发分镜不会重复收到。</div>
-            <label class="co-field"><span>批量绘画每页启动间隔（毫秒，最低 0）</span><input id="co-batch-drawing-interval" type="number" min="0" step="100" value="${esc(normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs))}"><small>Google 未公布 Gemini 网页的固定请求间隔；官方 API 按 RPM / TPM / RPD、图像 IPM 等动态额度管理。建议至少 300ms。</small></label>
+            <label class="co-field"><span>批量绘画每页启动间隔（毫秒，最低 0）</span><input id="co-batch-drawing-interval" type="number" min="0" step="100" value="${esc(normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs))}"><small>调度开始时读取当前值，暂停或缓存任务重试同样使用最新设置。Google 未公布 Gemini 网页的固定请求间隔；官方 API 按 RPM / TPM / RPD、图像 IPM 等动态额度管理。建议至少 300ms。</small></label>
             <label class="co-field"><span>酒馆用户数据绝对根目录（用于日志中的图片绝对路径）</span><input id="co-local-image-root" value="${esc(settings.storage.localImageRoot)}" placeholder="C:\\SillyTavern\\SillyTavern\\data\\default-user"></label>
             <div class="co-callout">绘画 API 每次返回的图片都会先完整保存到当前浏览器 IndexedDB，再上传到酒馆。删除缓存不会删除已经上传并插入正文的图片，但该图将无法再从正文发起重绘或查看实际提示词。</div>
           </div>
@@ -4512,17 +4550,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
             preflightNeutralize: Boolean(settings.preflightNeutralize),
-            batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
-            storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
             interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
-            autoRetry: clone(settings.autoRetry),
             characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
-            adaptationConf: { ...clone(settings.adaptation), autoRetry: clone(settings.autoRetry), backendMode }, storyboardConf: { ...clone(settings.storyboard), autoRetry: clone(settings.autoRetry), backendMode }, drawingConf: { ...clone(settings.drawing), autoRetry: clone(settings.autoRetry), backendMode }, refs: snapshotRefs(),
+            adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
             adaptationProfile: { id: adaptationProfile?.id || '', name: adaptationProfile?.name || '' },
             storyboardProfile: { id: storyboardProfile?.id || '', name: storyboardProfile?.name || '' },
             drawingProfile: { id: drawingProfile?.id || '', name: drawingProfile?.name || '' },
-            insert: clone(settings.insert), storage: clone(settings.storage), debugEnabled: Boolean(settings.debug.enabled),
+            insert: clone(settings.insert), storage: clone(settings.storage),
         };
     }
     function requireRedrawContext(job) {
@@ -4536,7 +4571,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!checkpoint.processId) checkpoint.processId = startRemoteProcess(job.reStoryboard ? '重新分镜并重绘全部页面' : `异步重绘漫画第 ${job.pageNumber} 页`, { method: 'WORKFLOW', url: `chat:${job.chatId || 'current'}/floor:${job.targetFloor}/page:${job.pageNumber}` });
         workflowCheckpoints.set(job.id, checkpoint);
         const processId = checkpoint.processId;
-        const signal = remoteProcessSignal(processId); const execution = { ...job.execution, signal, checkpoint };
+        const signal = remoteProcessSignal(processId); const execution = applyLiveExecutionControls({ ...job.execution, signal, checkpoint });
         execution.persistCheckpoint = () => persistWorkflowCheckpoint('redraw', job, checkpoint);
         await execution.persistCheckpoint();
         const cacheMeta = { batchId: job.id, sourcePlot: job.sourcePlot, sourceRange: job.sourceRange, targetFloor: job.targetFloor, chatId: job.chatId };
