@@ -18,6 +18,9 @@
 .co-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px }.co-full { grid-column:1/-1 }
 .co-field { display:flex; flex-direction:column; gap:5px }.co-field > span,.co-label { color:var(--co-muted); font-size:12px }
 .co-field input,.co-field select,.co-field textarea { width:100%; border:1px solid var(--co-border); border-radius:9px; color:var(--co-text); background:rgba(0,0,0,.24); padding:9px 10px; outline:none }
+#comic-orb-root .co-panel .co-field input,#comic-orb-root .co-panel .co-field select,#comic-orb-root .co-panel .co-field textarea { color:var(--co-text)!important; background-color:rgba(0,0,0,.24)!important; color-scheme:dark }
+#comic-orb-root .co-panel .co-api-base-field { display:flex!important; flex-direction:column!important; visibility:visible!important; opacity:1!important; position:static!important; width:100%!important; clip:auto!important; clip-path:none!important }
+#comic-orb-root .co-panel .co-api-base-input { display:block!important; visibility:visible!important; opacity:1!important; position:static!important; width:100%!important; min-height:40px!important; clip:auto!important; clip-path:none!important }
 .co-field textarea { min-height:92px; resize:vertical; line-height:1.5 }.co-field input:focus,.co-field textarea:focus,.co-field select:focus { border-color:var(--co-accent) }
 .co-inline { display:flex; gap:8px; align-items:center }.co-inline > * { flex:1 }.co-check { display:flex; gap:7px; align-items:center; color:var(--co-muted); font-size:12px }.co-check input { width:auto }
 .co-callout { padding:10px 12px; border-radius:10px; background:var(--co-card); color:var(--co-muted); font-size:12px; line-height:1.55 }

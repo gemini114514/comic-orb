@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.27.2';
+    const COMIC_ORB_VERSION = '1.27.3';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -642,6 +642,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return Number.isFinite(number) ? Math.max(64, Math.min(4096, number)) : 512;
     }
     function apiKindPrefix(kind) { return kind === 'adaptation' ? 'ad' : kind === 'storyboard' ? 'sb' : 'dr'; }
+    function apiBaseInputId(prefix) { return `comic-orb-${prefix}-api-base-url`; }
     function apiKindLabel(kind) { return kind === 'adaptation' ? '演绎' : kind === 'storyboard' ? '分镜' : '绘画'; }
     function initializeApiProfiles(kind) {
         if (!Array.isArray(settings.apiProfiles[kind])) settings.apiProfiles[kind] = [];
@@ -3724,7 +3725,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-last-story')?.closest('label')?.insertAdjacentElement('beforebegin', reasoningField);
 
     function apiFields(prefix, conf) {
-        return `<label class="co-field co-full"><span>API Base URL</span><input id="${prefix}-base" value="${esc(conf.baseUrl)}" placeholder="https://api.openai.com"></label>
+        return `<label class="co-field co-full co-api-base-field"><span>API Base URL</span><input class="co-api-base-input" id="${apiBaseInputId(prefix)}" type="text" inputmode="url" autocomplete="url" value="${esc(conf.baseUrl)}" placeholder="https://api.openai.com"></label>
           <label class="co-field"><span>接口路径</span><input id="${prefix}-path" value="${esc(conf.path)}"></label>
           <label class="co-field"><span>模型（输入可过滤，仍可手填）</span><div class="co-model-row"><div class="co-model-combo"><input id="${prefix}-model" autocomplete="off" value="${esc(conf.model)}"><div class="co-model-options" id="${prefix}-model-options"></div></div><button class="co-mini co-model-fetch" id="${prefix}-fetch-models" type="button">获取模型</button></div></label>
           <label class="co-field co-full"><span>模型列表路径</span><input id="${prefix}-models-path" value="${esc(conf.modelsPath || '/v1/models')}"></label>
@@ -3798,7 +3799,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }
     function fillApiUi(kind) {
         const prefix = apiKindPrefix(kind); const conf = settings[kind]; const set = (suffix, value) => { const el = root.querySelector(`#${prefix}-${suffix}`); if (el) el.value = value ?? ''; };
-        set('base', conf.baseUrl); set('path', conf.path); set('models-path', conf.modelsPath); set('key', conf.apiKey); set('model', conf.model); set('headers', conf.extraHeaders); set('extra', conf.extraBody);
+        const baseInput = root.querySelector(`#${apiBaseInputId(prefix)}`); if (baseInput) baseInput.value = conf.baseUrl || '';
+        set('path', conf.path); set('models-path', conf.modelsPath); set('key', conf.apiKey); set('model', conf.model); set('headers', conf.extraHeaders); set('extra', conf.extraBody);
         set('test-prompt', conf.testPrompt); modelCandidates[prefix] = []; root.querySelector(`#${prefix}-model-options`)?.classList.remove('open');
         const temporary = root.querySelector(`#${prefix}-temporary`); if (temporary) temporary.checked = conf.temporarySession !== false;
         if (kind !== 'drawing') {
@@ -4188,9 +4190,9 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(val('co-cache-preview-limit'));
         settings.storage.maxCacheMb = normalizeMaxCacheMb(val('co-cache-max-mb'));
         settings.storage.autoCleanup = checked('co-cache-auto-cleanup');
-        settings.adaptation = { ...settings.adaptation, baseUrl: val('ad-base'), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary'), storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(val('ad-storyboard-interval')) };
-        settings.storyboard = { ...settings.storyboard, baseUrl: val('sb-base'), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), stylePromptEnabled: checked('sb-style-enabled'), stylePrompt: val('sb-style-prompt') || DEFAULT_STORYBOARD_STYLE_PROMPT, testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
-        settings.drawing = { ...settings.drawing, baseUrl: val('dr-base'), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs'), enforceGoogleOfficialResolution: checked('dr-google-resolution-limit') };
+        settings.adaptation = { ...settings.adaptation, baseUrl: val(apiBaseInputId('ad')), path: val('ad-path'), modelsPath: val('ad-models-path'), apiKey: val('ad-key'), model: val('ad-model'), temperature: val('ad-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('ad-max-output-tokens')), maxOutputTokenField: val('ad-max-output-token-field') || 'auto', reasoningEffort: val('ad-reasoning-effort') || 'off', thinkingMode: val('ad-thinking-mode') || 'default', systemPrompt: val('ad-system') || DEFAULT_ADAPTATION_SYSTEM_PROMPT, testPrompt: val('ad-test-prompt'), extraBody: val('ad-extra'), extraHeaders: val('ad-headers'), temporarySession: checked('ad-temporary'), storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(val('ad-storyboard-interval')) };
+        settings.storyboard = { ...settings.storyboard, baseUrl: val(apiBaseInputId('sb')), path: val('sb-path'), modelsPath: val('sb-models-path'), apiKey: val('sb-key'), model: val('sb-model'), temperature: val('sb-temperature'), maxOutputTokens: normalizeMaxOutputTokens(val('sb-max-output-tokens')), maxOutputTokenField: val('sb-max-output-token-field') || 'auto', reasoningEffort: val('sb-reasoning-effort') || 'off', thinkingMode: val('sb-thinking-mode') || 'default', minPages: Number(val('sb-min-pages')) || 1, maxPages: Number(val('sb-max-pages')) || 2, minPanels: Number(val('sb-min-panels')) || 1, maxPanels: Number(val('sb-max-panels')) || 6, systemPrompt: val('sb-system'), stylePromptEnabled: checked('sb-style-enabled'), stylePrompt: val('sb-style-prompt') || DEFAULT_STORYBOARD_STYLE_PROMPT, testPrompt: val('sb-test-prompt'), extraBody: val('sb-extra'), extraHeaders: val('sb-headers'), temporarySession: checked('sb-temporary') };
+        settings.drawing = { ...settings.drawing, baseUrl: val(apiBaseInputId('dr')), path: val('dr-path'), modelsPath: val('dr-models-path'), apiKey: val('dr-key'), model: val('dr-model'), mode: val('dr-mode'), size: val('dr-size'), quality: val('dr-quality'), outputFormat: val('dr-output-format'), outputCompression: val('dr-output-compression'), background: val('dr-background'), inputFidelity: val('dr-input-fidelity'), useLocalProxy: checked('dr-local-proxy'), requestTimeoutSeconds: Math.max(60, Math.min(1800, Number(val('dr-timeout')) || 600)), promptPrefix: val('dr-prefix'), testPrompt: val('dr-test-prompt'), extraBody: val('dr-extra'), extraHeaders: val('dr-headers'), temporarySession: checked('dr-temporary'), sendReferences: checked('dr-sendrefs'), enforceGoogleOfficialResolution: checked('dr-google-resolution-limit') };
         save();
     }
     function val(id) { return root.querySelector(`#${id}`)?.value ?? ''; }
