@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.27.3/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.28.0/diagnose.js');
 await doctor.download();
 ```
 
@@ -110,6 +110,8 @@ SillyTavern/public/scripts/extensions/third-party/comic-orb
 当 API Base URL 指向本地 `gemini-web-to-api`（`127.0.0.1:4981/openai` 或 `localhost:4981/openai`）时，每个演绎、分镜和绘画 API 实例都可独立选择匿名/临时会话；开启后该次请求不会写入 Gemini 网页对话历史。日志页会直接显示最近一次大模型 API 原始 JSON 响应，图片 base64 与鉴权信息仍会自动省略。
 
 演绎 API 实例可设置“演绎完成后并发分镜启动间隔”，默认 300ms、最低 100ms。第一个分镜立即启动，后续故事段依次错峰发出，避免多个长请求在同一毫秒进入服务商而触发请求突发保护；该值随 API 实例与后台任务快照保存，不影响直接分镜和绘画分页间隔。
+
+批量绘画可分别设置“每页启动间隔”和“最大并发数”。最大并发范围为 1-20、默认 2；设为 1 时严格串行。只有某一页完成并释放槽位后，下一页才会进入请求，同时仍遵守启动间隔。后台持久化任务在进入绘画阶段或手动重试时读取最新调度设置，不会继续使用缓存中的旧并发值。
 
 API Key 只保存在当前浏览器 `localStorage`。导出的 API 实例 JSON 会包含 Key，请勿公开。
 
@@ -223,7 +225,7 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.27.3`
+当前版本：`1.28.0`
 
 ### TT 酒馆与代码渲染兼容
 

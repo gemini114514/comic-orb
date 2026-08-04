@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.27.3';
+    const COMIC_ORB_VERSION = '1.28.0';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -446,6 +446,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         outputLanguage: 'zh-CN',
         workflowMode: 'direct',
         batchDrawingIntervalMs: 5000,
+        batchDrawingMaxConcurrency: 2,
         interpretivePageRange: { min: 2, max: 8 },
         storyboardWorkerPages: '1-3',
         includeNames: true,
@@ -510,6 +511,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         ? (storedSettings.backendMode === 'full' ? 'full' : 'basic')
         : (Object.keys(storedSettings).length ? 'full' : 'basic');
     settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
+    settings.batchDrawingMaxConcurrency = normalizeBatchDrawingMaxConcurrency(settings.batchDrawingMaxConcurrency);
     settings.adaptation.storyboardLaunchIntervalMs = normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs);
     settings.autoRetry = normalizeAutoRetry(settings.autoRetry);
     settings.storage.cachePreviewLimit = normalizeCachePreviewLimit(settings.storage.cachePreviewLimit);
@@ -1028,6 +1030,10 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const parsed = Number(value);
         return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 5000;
     }
+    function normalizeBatchDrawingMaxConcurrency(value) {
+        const parsed = Math.round(Number(value));
+        return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 2;
+    }
     function normalizeStoryboardLaunchInterval(value) {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? Math.max(100, Math.min(2147483647, Math.round(parsed))) : 300;
@@ -1048,6 +1054,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function liveExecutionControls() {
         return {
             batchDrawingIntervalMs: normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs),
+            batchDrawingMaxConcurrency: normalizeBatchDrawingMaxConcurrency(settings.batchDrawingMaxConcurrency),
             storyboardLaunchIntervalMs: normalizeStoryboardLaunchInterval(settings.adaptation.storyboardLaunchIntervalMs),
             autoRetry: normalizeAutoRetry(settings.autoRetry),
             debugEnabled: Boolean(settings.debug.enabled),
@@ -1071,6 +1078,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const saved = clone(job);
         if (!saved?.execution || typeof saved.execution !== 'object') return saved;
         delete saved.execution.batchDrawingIntervalMs;
+        delete saved.execution.batchDrawingMaxConcurrency;
         delete saved.execution.storyboardLaunchIntervalMs;
         delete saved.execution.autoRetry;
         delete saved.execution.debugEnabled;
@@ -3071,6 +3079,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const started = performance.now();
         const debugEnabled = execution.debugEnabled ?? settings.debug.enabled;
         const staggerMs = normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs);
+        const maxConcurrency = normalizeBatchDrawingMaxConcurrency(settings.batchDrawingMaxConcurrency);
         const retainedResults = execution.checkpoint?.drawingResults || new Map();
         const batchController = new AbortController();
         let primaryFailure = null; let primaryFailurePage = null;
@@ -3079,34 +3088,62 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             else execution.signal.addEventListener('abort', () => batchController.abort(execution.signal.reason), { once: true });
         }
         await writeLog('operation', '并发绘画调度开始', debugEnabled
-            ? { summary: storyboardSummary(plan), staggerMs, staggerTime: formatDuration(staggerMs), retainedPages: [...retainedResults.keys()], pages: plan.pages.map(page => ({ page: page.page, panels: page.panels.length, prompt: page.page_prompt })) }
-            : { pages: plan.pages.length, retained: retainedResults.size, staggerMs, staggerTime: formatDuration(staggerMs), panels: plan.pages.map(page => page.panels.length) });
+            ? { summary: storyboardSummary(plan), maxConcurrency, staggerMs, staggerTime: formatDuration(staggerMs), retainedPages: [...retainedResults.keys()], pages: plan.pages.map(page => ({ page: page.page, panels: page.panels.length, prompt: page.page_prompt })) }
+            : { pages: plan.pages.length, retained: retainedResults.size, maxConcurrency, staggerMs, staggerTime: formatDuration(staggerMs), panels: plan.pages.map(page => page.panels.length) });
         const pendingPages = plan.pages.filter(page => !retainedResults.has(Number(page.page)));
-        const settled = await Promise.allSettled(pendingPages.map(async (page, launchIndex) => {
+        const settled = new Array(pendingPages.length);
+        let nextPageIndex = 0;
+        let lastLaunchAt = null;
+        let launchGate = Promise.resolve();
+        async function waitForLaunchSlot() {
+            let releaseGate;
+            const previousGate = launchGate;
+            launchGate = new Promise(resolve => { releaseGate = resolve; });
+            await previousGate;
             try {
-                await abortableDelay(launchIndex * staggerMs, batchController.signal);
-                const result = await callDrawing(page.page_prompt, { withTiming: true, pageNumber: page.page, pagePrompt: page.page_prompt, cacheMeta: { ...cacheMeta, storyboardPlan: plan }, outputLanguage: execution.outputLanguage || plan.language, conf: execution.drawingConf, refs: execution.refs, characterCards: execution.characterCards, profile: execution.drawingProfile, signal: batchController.signal });
-                const retained = { page: page.page, panels: page.panels.length, image: result.image, timing: result.timing, cacheId: result.cacheId, prompt: result.prompt };
-                retainedResults.set(Number(page.page), retained);
-                await execution.persistCheckpoint?.();
-                return retained;
-            } catch (error) {
-                if (!batchController.signal.aborted) { primaryFailure = error; primaryFailurePage = Number(page.page); batchController.abort(error); }
-                throw error;
+                ensureNotCanceled(batchController.signal);
+                if (lastLaunchAt !== null && staggerMs > 0) {
+                    const waitMs = Math.max(0, lastLaunchAt + staggerMs - performance.now());
+                    await abortableDelay(waitMs, batchController.signal);
+                }
+                ensureNotCanceled(batchController.signal);
+                lastLaunchAt = performance.now();
+            } finally {
+                releaseGate();
             }
-        }));
+        }
+        async function drawingWorker() {
+            while (true) {
+                const pageIndex = nextPageIndex++;
+                if (pageIndex >= pendingPages.length) return;
+                const page = pendingPages[pageIndex];
+                try {
+                    await waitForLaunchSlot();
+                    const result = await callDrawing(page.page_prompt, { withTiming: true, pageNumber: page.page, pagePrompt: page.page_prompt, cacheMeta: { ...cacheMeta, storyboardPlan: plan }, outputLanguage: execution.outputLanguage || plan.language, conf: execution.drawingConf, refs: execution.refs, characterCards: execution.characterCards, profile: execution.drawingProfile, signal: batchController.signal });
+                    const retained = { page: page.page, panels: page.panels.length, image: result.image, timing: result.timing, cacheId: result.cacheId, prompt: result.prompt };
+                    retainedResults.set(Number(page.page), retained);
+                    await execution.persistCheckpoint?.();
+                    settled[pageIndex] = { status: 'fulfilled', value: retained };
+                } catch (error) {
+                    if (!batchController.signal.aborted) { primaryFailure = error; primaryFailurePage = Number(page.page); batchController.abort(error); }
+                    settled[pageIndex] = { status: 'rejected', reason: error };
+                }
+            }
+        }
+        const workerCount = Math.min(maxConcurrency, pendingPages.length);
+        await Promise.all(Array.from({ length: workerCount }, () => drawingWorker()));
         const failed = settled.map((item, index) => ({ item, page: pendingPages[index].page })).filter(x => x.item.status === 'rejected');
         const wallMs = Math.round(performance.now() - started);
         if (failed.length) {
-            await writeLog('error', '并发绘画调度暂停', { wallMs, wallTime: formatDuration(wallMs), retainedPages: [...retainedResults.keys()].sort((a, b) => a - b), primaryFailurePage, failures: failed.map(x => ({ page: x.page, status: x.page === primaryFailurePage ? 'failed' : 'canceled_by_peer_failure', error: x.page === primaryFailurePage ? (x.item.reason?.message || String(x.item.reason)) : `因第 ${primaryFailurePage} 页失败而取消` })) });
+            await writeLog('error', '并发绘画调度暂停', { wallMs, wallTime: formatDuration(wallMs), maxConcurrency, staggerMs, retainedPages: [...retainedResults.keys()].sort((a, b) => a - b), primaryFailurePage, failures: failed.map(x => ({ page: x.page, status: x.page === primaryFailurePage ? 'failed' : 'canceled_by_peer_failure', error: x.page === primaryFailurePage ? (x.item.reason?.message || String(x.item.reason)) : `因第 ${primaryFailurePage} 页失败而取消` })) });
             if (execution.signal?.aborted || isCanceledError(primaryFailure)) throw new DOMException('绘画子任务被用户取消', 'AbortError');
             throw new Error(`并发绘画已暂停，成功图片已保留；重试只补未完成页：${failed.map(x => x.page === primaryFailurePage ? `第 ${x.page} 页：${x.item.reason?.message || x.item.reason}` : `第 ${x.page} 页：因第 ${primaryFailurePage} 页失败而取消，尚未完成`).join('；')}`);
         }
         const results = plan.pages.map(page => retainedResults.get(Number(page.page))).filter(Boolean).sort((a, b) => a.page - b.page);
         if (results.length !== plan.pages.length) throw new Error(`绘画检查点不完整：需要 ${plan.pages.length} 页，当前保留 ${results.length} 页`);
         await writeLog('result', '并发绘画调度完成', debugEnabled
-            ? { wallMs, wallTime: formatDuration(wallMs), pages: results.map(x => ({ page: x.page, panels: x.panels, timing: x.timing, cacheId: x.cacheId })) }
-            : { wallMs, wallTime: formatDuration(wallMs), pages: results.map(x => ({ page: x.page, time: x.timing?.elapsedText || '未知' })) });
+            ? { wallMs, wallTime: formatDuration(wallMs), maxConcurrency, staggerMs, pages: results.map(x => ({ page: x.page, panels: x.panels, timing: x.timing, cacheId: x.cacheId })) }
+            : { wallMs, wallTime: formatDuration(wallMs), maxConcurrency, staggerMs, pages: results.map(x => ({ page: x.page, time: x.timing?.elapsedText || '未知' })) });
         return { results, wallMs, wallTime: formatDuration(wallMs) };
     }
     function makeTestImage() {
@@ -3447,7 +3484,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             }
             lastStoryboard = JSON.stringify(plan, null, 2); updateDebug();
             await writeLog('result', '分镜 JSON 校验通过', execution.debugEnabled ? { taskId: job.id, summary: storyboardSummary(plan), plan } : { taskId: job.id, result: storyboardSummary(plan) });
-            updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 错峰并发绘画 ${plan.pages.length} 页`, `${storyboardSummary(plan)} · 每页启动间隔 ${formatDuration(execution.batchDrawingIntervalMs)} · 分镜 ${storyboardTiming?.elapsedText || '耗时未知'}`);
+            updateRemoteProcess(processId, `漫画任务 #${job.shortId} · 错峰并发绘画 ${plan.pages.length} 页`, `${storyboardSummary(plan)} · 最大并发 ${execution.batchDrawingMaxConcurrency} · 每页启动间隔 ${formatDuration(execution.batchDrawingIntervalMs)} · 分镜 ${storyboardTiming?.elapsedText || '耗时未知'}`);
             const cacheMeta = { batchId: job.id, sourcePlot: job.selection.text, sourceRange: { start: job.start, end: job.end }, targetFloor: job.targetFloor, chatId: job.chatId };
             const drawingBatch = await drawStoryboardPages(plan, cacheMeta, execution);
             checkpoint.stage = 'persist';
@@ -3583,7 +3620,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-check co-full"><input id="co-names" type="checkbox" ${settings.includeNames ? 'checked' : ''}>发送剧情时保留角色名和楼层号</label>
             <label class="co-check co-full"><input id="co-exclude-user-floors" type="checkbox" ${settings.excludeUserFloors !== false ? 'checked' : ''}>不发送 User 类型楼层（默认开启；关闭后 User 楼也加入剧情正文）</label>
             <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini co-test" id="co-ai-regex" type="button">AI 辅助制作正则</button><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
-            <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-20页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画页按设置的启动间隔依次发起，设为0可同时发起。范围包含首尾且自动剔除User楼；每次提交都会冻结模式、页数、语言、剧情、正则、API、参考图、绘画间隔和写回目标。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
+            <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-20页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画阶段同时受最大并发数和启动间隔约束；范围包含首尾且自动剔除User楼。每次提交会冻结剧情、API、参考图和写回目标，调度间隔、最大绘画并发、重试与日志设置则在阶段开始或重试时读取最新值。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
           </div><button class="co-run" id="co-run">生成并发分页漫画并插入末层</button><div class="co-status" id="co-status">等待开始。直接模式需配置分镜与绘画 API；演绎模式还需配置独立演绎 API。</div></div>
           <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并持久化成功检查点；即使按 F5 或关闭后重新打开页面，也会恢复为等待处理。“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的 Cancel 会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
           <div class="co-page" data-page="refs"><div class="co-callout">参考图以命名预设管理，每套最多四张图及对应提示词。参考图只发送给启用了参考图的绘画 AI，不发送给演绎或分镜 AI；图片和预设均保存在当前浏览器 IndexedDB。</div><div class="co-profile-manager co-ref-preset-manager"><div class="co-profile-top"><label class="co-field"><span>参考图预设</span><select id="co-ref-preset"></select></label><label class="co-field"><span>预设名称</span><input id="co-ref-preset-name" placeholder="例如：主角常服"></label></div><div class="co-profile-actions"><button class="co-mini" id="co-ref-preset-new" type="button">新建</button><button class="co-mini co-test" id="co-ref-preset-save" type="button">保存修改</button><button class="co-mini co-danger" id="co-ref-preset-delete" type="button">删除</button><button class="co-mini" id="co-import-refs" type="button">导入预设库</button><input id="co-import-refs-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-refs" type="button">导出预设库</button></div><div class="co-ref-preset-state" id="co-ref-preset-state">正在读取预设…</div></div><div id="co-refs"></div></div>
@@ -3674,6 +3711,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <div class="co-callout">关闭时，演绎与直接分镜 API 会收到剧情正则及 MVU 处理后的原文；开启时，只对本次 API 请求副本中的少量直白评价和写实组织措辞做等义替换，不修改酒馆正文、缓存或检查点。该开关会随后台任务快照冻结。</div>
             <div class="co-callout">MVU 数据永远在剧情正则完成后追加。多楼层优先发送“首个剧情楼完整基线 + 后续剧情楼 JSON Patch 增量”；无法可靠读取历史时只发送末楼当前快照。直接分镜模式只交给分镜 AI 一次；演绎分镜模式只交给演绎 AI 一次，后续并发分镜不会重复收到。</div>
             <label class="co-field"><span>批量绘画每页启动间隔（毫秒，最低 0）</span><input id="co-batch-drawing-interval" type="number" min="0" step="100" value="${esc(normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs))}"><small>调度开始时读取当前值，暂停或缓存任务重试同样使用最新设置。Google 未公布 Gemini 网页的固定请求间隔；官方 API 按 RPM / TPM / RPD、图像 IPM 等动态额度管理。建议至少 300ms。</small></label>
+            <label class="co-field"><span>批量绘画最大并发数（1-20）</span><input id="co-batch-drawing-max-concurrency" type="number" min="1" max="20" step="1" value="${esc(normalizeBatchDrawingMaxConcurrency(settings.batchDrawingMaxConcurrency))}"><small>限制同时处于请求中的绘画页数，默认 2。设为 1 即完全串行，适合 Gemini 网页反代或容易触发 429 的服务；与启动间隔共同生效。</small></label>
             <label class="co-field"><span>酒馆用户数据绝对根目录（用于日志中的图片绝对路径）</span><input id="co-local-image-root" value="${esc(settings.storage.localImageRoot)}" placeholder="C:\\SillyTavern\\SillyTavern\\data\\default-user"></label>
             <div class="co-callout">绘画 API 每次返回的图片都会先完整保存到当前浏览器 IndexedDB，再上传到酒馆。删除缓存不会删除已经上传并插入正文的图片，但该图将无法再从正文发起重绘或查看实际提示词。</div>
           </div>
@@ -4181,7 +4219,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.batchDrawingMaxConcurrency = normalizeBatchDrawingMaxConcurrency(val('co-batch-drawing-max-concurrency')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.autoRetry = normalizeAutoRetry({ enabled: checked('co-auto-retry-enabled'), mode: val('co-auto-retry-mode'), maxRetries: val('co-auto-retry-count'), intervalMs: val('co-auto-retry-interval') });
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
