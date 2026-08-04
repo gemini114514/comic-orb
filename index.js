@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.28.0';
+    const COMIC_ORB_VERSION = '1.29.0';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -1633,6 +1633,60 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         }
         return patch;
     }
+    function mvuPathSeriesPayload(payload) {
+        if (payload?.mode !== 'baseline-plus-json-patch' || !Array.isArray(payload.changes)) return null;
+        const seriesByPath = new Map();
+        const opCode = { add: 'a', replace: 'r', remove: 'd' };
+        let eventCount = 0;
+        for (const change of payload.changes) {
+            const floor = Number(change?.floor);
+            if (!Number.isInteger(floor) || !Array.isArray(change?.patch)) continue;
+            for (const [operationIndex, operation] of change.patch.entries()) {
+                const code = opCode[operation?.op];
+                if (!code || typeof operation?.path !== 'string') continue;
+                if (!seriesByPath.has(operation.path)) seriesByPath.set(operation.path, []);
+                const event = [floor, operationIndex, code];
+                if (Object.prototype.hasOwnProperty.call(operation, 'value')) event.push(mvuAtomicClone(operation.value));
+                seriesByPath.get(operation.path).push(event);
+                eventCount++;
+            }
+        }
+        return {
+            payload: {
+                format: 'comic-orb-mvu-timeline',
+                version: 2,
+                mode: 'baseline-plus-path-series',
+                recipient: payload.recipient,
+                baseline: payload.baseline,
+                event_format: '[floor,order,op,value?]',
+                op_legend: { a: 'add', r: 'replace', d: 'remove' },
+                change_series: [...seriesByPath].map(([path, events]) => ({ path, events })),
+            },
+            eventCount,
+            uniquePaths: seriesByPath.size,
+        };
+    }
+    function encodeMvuPayload(payload) {
+        const legacyCompact = JSON.stringify(payload);
+        const legacyPretty = JSON.stringify(payload, null, 2);
+        const legacyBytes = new Blob([legacyCompact]).size;
+        const legacyOperations = Array.isArray(payload?.changes) ? payload.changes.flatMap(change => Array.isArray(change?.patch) ? change.patch : []) : [];
+        const legacyPaths = new Set(legacyOperations.map(operation => operation?.path).filter(path => typeof path === 'string'));
+        const series = mvuPathSeriesPayload(payload);
+        const candidates = [{ encoding: 'compact-json-patch', payload, serialized: legacyCompact, bytes: legacyBytes, eventCount: legacyOperations.length, uniquePaths: legacyPaths.size }];
+        if (series) {
+            const serialized = JSON.stringify(series.payload);
+            candidates.push({ encoding: 'compact-path-series', payload: series.payload, serialized, bytes: new Blob([serialized]).size, eventCount: series.eventCount, uniquePaths: series.uniquePaths });
+        }
+        candidates.sort((a, b) => a.bytes - b.bytes);
+        const selected = candidates[0];
+        return {
+            ...selected,
+            legacyCompactBytes: legacyBytes,
+            legacyPrettyBytes: new Blob([legacyPretty]).size,
+            savedBytes: Math.max(0, new Blob([legacyPretty]).size - selected.bytes),
+        };
+    }
     async function buildMvuPayload(ctx, floors, workflowMode) {
         const selectedFloors = [...new Set((floors || []).map(Number).filter(Number.isInteger))].sort((a, b) => a - b);
         if (!selectedFloors.length) throw new Error('没有可用于读取 MVU 的剧情楼层');
@@ -1689,10 +1743,32 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     async function appendMvuAfterRegex(selection, ctx, execution) {
         if (!execution.includeMvuData) return { ...selection, mvuMeta: { enabled: false } };
         const { payload, meta } = await buildMvuPayload(ctx, selection.floors, execution.workflowMode);
-        const serialized = JSON.stringify(payload, null, 2);
+        const encoded = encodeMvuPayload(payload);
+        const serialized = encoded.serialized;
         const recipientText = execution.workflowMode === 'interpretive' ? '仅供本任务的演绎 AI 使用一次；后续并发分镜不再重复接收' : '仅供本任务的直接分镜 AI 使用一次';
-        const block = `<comic_orb_mvu_context>\n以下数据在剧情正则处理完成后附加。它是与所选楼层对应的 MVU 状态参考，不是新的剧情正文，也不要输出或猜测变量更新命令。${recipientText}。baseline 是起点完整状态；changes 是后续剧情楼相对上一剧情楼的 RFC 6902 风格 JSON Patch。若 mode 为 current-snapshot-fallback，则历史不可可靠读取，只使用末楼当前状态辅助理解。\n${serialized}\n</comic_orb_mvu_context>`;
-        return { ...selection, text: `${selection.text}\n\n${block}`, mvuMeta: { enabled: true, ...meta, bytes: new Blob([block]).size } };
+        const timelineText = encoded.payload.mode === 'baseline-plus-path-series'
+            ? 'baseline 是起点完整状态；change_series 按 JSON Pointer path 归组全部后续变化，每个 events 元素遵循 event_format，order 保留同楼操作的原始执行顺序，op 含义见 op_legend。所有楼层、操作和值均被无损保留。'
+            : encoded.payload.mode === 'baseline-plus-json-patch'
+                ? 'baseline 是起点完整状态；changes 是后续剧情楼相对上一剧情楼的 RFC 6902 风格 JSON Patch。'
+                : '历史不可可靠读取，只使用末楼 current 当前快照辅助理解。';
+        const block = `<comic_orb_mvu_context>\n以下数据在剧情正则处理完成后附加。它是与所选楼层对应的 MVU 状态参考，不是新的剧情正文，也不要输出或猜测变量更新命令。${recipientText}。${timelineText}\n${serialized}\n</comic_orb_mvu_context>`;
+        return {
+            ...selection,
+            text: `${selection.text}\n\n${block}`,
+            mvuMeta: {
+                enabled: true,
+                ...meta,
+                mode: encoded.payload.mode,
+                encoding: encoded.encoding,
+                bytes: new Blob([block]).size,
+                payloadBytes: encoded.bytes,
+                legacyCompactBytes: encoded.legacyCompactBytes,
+                legacyPrettyBytes: encoded.legacyPrettyBytes,
+                savedBytes: encoded.savedBytes,
+                eventCount: encoded.eventCount,
+                uniquePaths: encoded.uniquePaths,
+            },
+        };
     }
 
     function readFile(file) {
@@ -3709,7 +3785,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-check co-debug-toggle"><input id="co-include-mvu" type="checkbox" ${settings.includeMvuData ? 'checked' : ''}>发送剧情时携带 MVU 数据</label>
             <label class="co-check co-debug-toggle"><input id="co-preflight-neutralize" type="checkbox" ${settings.preflightNeutralize ? 'checked' : ''}>启用 API 发送前中性措辞清洗（默认关闭，仅用于输入外审过严的平台）</label>
             <div class="co-callout">关闭时，演绎与直接分镜 API 会收到剧情正则及 MVU 处理后的原文；开启时，只对本次 API 请求副本中的少量直白评价和写实组织措辞做等义替换，不修改酒馆正文、缓存或检查点。该开关会随后台任务快照冻结。</div>
-            <div class="co-callout">MVU 数据永远在剧情正则完成后追加。多楼层优先发送“首个剧情楼完整基线 + 后续剧情楼 JSON Patch 增量”；无法可靠读取历史时只发送末楼当前快照。直接分镜模式只交给分镜 AI 一次；演绎分镜模式只交给演绎 AI 一次，后续并发分镜不会重复收到。</div>
+            <div class="co-callout">MVU 数据永远在剧情正则完成后追加。多楼层会无损保留“首个剧情楼完整基线 + 后续全部变化”，并在通用逐楼 JSON Patch 与按 JSON Pointer 归组的路径时间序列之间自动选择体积更小的紧凑编码；不识别、不删减任何特定变量名。无法可靠读取历史时只发送末楼当前快照。直接分镜模式只交给分镜 AI 一次；演绎分镜模式只交给演绎 AI 一次，后续并发分镜不会重复收到。</div>
             <label class="co-field"><span>批量绘画每页启动间隔（毫秒，最低 0）</span><input id="co-batch-drawing-interval" type="number" min="0" step="100" value="${esc(normalizeBatchDrawingInterval(settings.batchDrawingIntervalMs))}"><small>调度开始时读取当前值，暂停或缓存任务重试同样使用最新设置。Google 未公布 Gemini 网页的固定请求间隔；官方 API 按 RPM / TPM / RPD、图像 IPM 等动态额度管理。建议至少 300ms。</small></label>
             <label class="co-field"><span>批量绘画最大并发数（1-20）</span><input id="co-batch-drawing-max-concurrency" type="number" min="1" max="20" step="1" value="${esc(normalizeBatchDrawingMaxConcurrency(settings.batchDrawingMaxConcurrency))}"><small>限制同时处于请求中的绘画页数，默认 2。设为 1 即完全串行，适合 Gemini 网页反代或容易触发 429 的服务；与启动间隔共同生效。</small></label>
             <label class="co-field"><span>酒馆用户数据绝对根目录（用于日志中的图片绝对路径）</span><input id="co-local-image-root" value="${esc(settings.storage.localImageRoot)}" placeholder="C:\\SillyTavern\\SillyTavern\\data\\default-user"></label>
@@ -4303,7 +4379,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             selection = await appendMvuAfterRegex(selection, ctx, execution);
             const transportPreview = execution.preflightNeutralize ? neutralizeNarrativeWordingForTransport(selection.text) : { text: selection.text, count: 0 };
             const wrap = root.querySelector('#co-regex-preview-wrap'); const preview = root.querySelector('#co-regex-preview'); preview.value = transportPreview.text; wrap.classList.add('open'); preview.scrollTop = 0;
-            const mvuSummary = selection.mvuMeta?.enabled ? `；MVU：${selection.mvuMeta.mode === 'baseline-plus-json-patch' ? `完整基线 + ${selection.mvuMeta.changedFloors} 个变化楼` : '历史不可用，末楼当前快照'}` : '；MVU：未启用';
+            const mvuSummary = selection.mvuMeta?.enabled ? `；MVU：${String(selection.mvuMeta.mode || '').startsWith('baseline-plus-') ? `完整基线 + ${selection.mvuMeta.changedFloors} 个变化楼，${selection.mvuMeta.encoding || '紧凑编码'}，${selection.mvuMeta.bytes || 0} bytes` : '历史不可用，末楼当前快照'}` : '；MVU：未启用';
             const preflightSummary = execution.preflightNeutralize ? `；前置清洗：${transportPreview.count} 处` : '；前置清洗：关闭';
             setStatus(`正则测试完成：显示 ${selection.floors.length} 个对话楼，${execution.excludeUserFloors ? `已剔除 ${selection.skippedUserFloors.length} 个 User 楼` : '已包含 User 楼'}${mvuSummary}${preflightSummary}，未发送 API。`, 'ok');
         } catch (error) { setStatus(`正则测试失败：${error.message}`, 'error'); notify(error.message, 'error'); }

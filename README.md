@@ -41,7 +41,7 @@ await doctor.download();
 若本地诊断模块也无法加载，可临时使用对应发布版本：
 
 ```js
-const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.28.0/diagnose.js');
+const doctor = await import('https://cdn.jsdelivr.net/gh/gemini114514/comic-orb@v1.29.0/diagnose.js');
 await doctor.download();
 ```
 
@@ -197,10 +197,11 @@ API Key 只保存在当前浏览器 `localStorage`。导出的 API 实例 JSON �
 
 MVU 开启后：
 
-- 多楼层优先发送首楼完整状态基线；
-- 后续楼层只发送 JSON Patch 风格变化；
-- 无法读取历史时只发送末楼当前状态；
-- 直接模式只发给分镜，演绎模式只发给演绎，不重复发送。
+- 不识别或过滤任何特定 MVU 字段，兼容不同角色卡的任意 `stat_data` 结构。
+- 多楼层状态使用首楼完整基线，并无损保留后续所有 add、replace、remove 变化。
+- 序列化时自动比较紧凑逐楼 JSON Patch 与按 JSON Pointer 归组的路径时间序列，发送实际字节更小的一种；楼层、路径、操作和值均不丢失。
+- 当前快照回退同样使用紧凑 JSON，不再把仅供人类阅读的缩进空白发送给模型。
+- 无法读取历史时只发送末楼当前状态；直接模式只发给分镜，演绎模式只发给演绎，不重复发送。
 
 ## 安全提示
 
@@ -225,7 +226,7 @@ uninstall-server-plugin.* 服务端插件卸载器（Windows / Unix）
 
 ## 版本
 
-当前版本：`1.28.0`
+当前版本：`1.29.0`
 
 ### TT 酒馆与代码渲染兼容
 
