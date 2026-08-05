@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.32.2';
+    const COMIC_ORB_VERSION = '1.32.3';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -3877,7 +3877,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
       <dialog class="co-dialog co-regex-ai-dialog" id="co-regex-ai-dialog"><form method="dialog"><header><strong>AI 辅助制作剧情正则</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">下面的指导词和所选范围未经任何正则处理的完整楼层原文，将作为纯文本发送给当前分镜 API；不会发送参考图、MVU或现有正则处理结果。你可以在发送前补充需要删除或保留的内容。</div><label class="co-field"><span>正则制作指导词（可编辑）</span><textarea id="co-regex-ai-guide">${esc(settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE)}</textarea></label><label class="co-field"><span>将发送的未清洗楼层原文（只读）</span><textarea id="co-regex-ai-source" readonly></textarea></label><div class="co-status" id="co-regex-ai-status">尚未发送。</div><section id="co-regex-ai-result-wrap" hidden><label class="co-field"><span>AI 返回并通过校验的漫画球正则 JSON</span><textarea id="co-regex-ai-result" readonly></textarea></label><label class="co-field"><span>在本次原文上的清洗预览</span><textarea id="co-regex-ai-preview" readonly></textarea></label><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-append" type="button">追加到现有规则</button><button class="co-mini co-test" id="co-regex-ai-replace" type="button">覆盖现有规则</button></div></section><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-reset-guide" type="button">恢复默认指导词</button><button class="co-mini" value="cancel">关闭</button><button class="co-mini co-test" id="co-regex-ai-send" type="button">发送给分镜 API</button></div></form></dialog>
       <dialog class="co-dialog co-redraw-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画重绘与提示词编辑器</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><label class="co-redraw-editor"><span id="co-redraw-editor-label">当前页分镜提示词</span><textarea id="co-actual-prompt" spellcheck="false"></textarea><small id="co-redraw-editor-help">编辑后的文本会直接作为本页分镜提示词交给绘画阶段。</small></label><div class="co-callout">确认时会冻结编辑后的文本、当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini" id="co-copy-prompt" type="button">复制编辑文本</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></form></dialog>
       <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><label class="co-reader-chat"><span>漫画批次</span><select id="co-reader-batch-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-reader-jump"><button class="co-mini" id="co-reader-first" type="button" title="跳到第一页">≪</button><label><span>页号</span><select id="co-reader-page-select"></select></label><button class="co-mini" id="co-reader-last" type="button" title="跳到最后一页">≫</button><label><span>版本</span><select id="co-reader-version-select"></select></label></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini co-test" id="co-reader-prompt" type="button">编辑提示词并重绘</button><button class="co-mini" id="co-reader-export" type="button">导出批次</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>
-      <dialog class="co-dialog co-export-dialog" id="co-export-dialog"><form method="dialog"><header><strong>无损导出漫画批次</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">每页会采用你在阅读器中最后浏览的具体版本；没有手动选择的页使用最新版。图片不缩放、不转成有损格式，压缩包直接保存二进制而非体积膨胀的 base64。</div><label class="co-field"><span>漫画批次</span><select id="co-export-batch"></select></label><label class="co-field"><span>页面缝合方法</span><select id="co-export-stitch"><option value="none">不缝合：每页单独导出</option><option value="vertical-pairs">每两页上下缝合：1+2、3+4…</option><option value="horizontal-pairs">每两页左右缝合：1+2、3+4…</option></select></label><div class="co-status" id="co-export-status">请选择批次。奇数末页会保持单页，不会丢弃。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-export-confirm" type="button">生成 ZIP 并下载</button></div></form></dialog>`;
+      <dialog class="co-dialog co-export-dialog" id="co-export-dialog"><form method="dialog"><header><strong>无损导出漫画批次</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">每页会采用你在阅读器中最后浏览的具体版本；没有手动选择的页使用最新版。图片不缩放、不转成有损格式，压缩包直接保存二进制而非体积膨胀的 base64。</div><label class="co-field"><span>漫画批次</span><select id="co-export-batch"></select></label><label class="co-field"><span>页面缝合方法</span><select id="co-export-stitch"><option value="none">不缝合：每页单独导出</option><option value="vertical-pairs">上下垂直缝合</option><option value="horizontal-pairs">每两页左右缝合：1+2、3+4…</option></select></label><label class="co-field" id="co-export-vertical-count-field" hidden><span>垂直缝合每组张数</span><select id="co-export-vertical-count"><option value="2">2 张：1+2、3+4…</option><option value="3">3 张：1+2+3、4+5+6…</option><option value="4">4 张：1+2+3+4、5+6+7+8…</option></select></label><div class="co-status" id="co-export-status">请选择批次。末组不足时仍会正常导出，不会丢页。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-export-confirm" type="button">生成 ZIP 并下载</button></div></form></dialog>`;
     document.body.appendChild(root);
     bootTrace('root-appended', { childCount: root.childElementCount });
     const setFabVisible = visible => {
@@ -4575,26 +4575,28 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('浏览器无法解码缓存图片')); image.src = url; });
         return { drawable: image, width: image.naturalWidth, height: image.naturalHeight, close: () => URL.revokeObjectURL(url) };
     }
-    async function stitchImagePair(first, second, direction) {
-        const firstBlob = await imageRecordBlob(first); const secondBlob = await imageRecordBlob(second);
-        const [a, b] = await Promise.all([decodeExportImage(firstBlob), decodeExportImage(secondBlob)]);
+    async function stitchImageRecords(records, direction) {
+        if (!Array.isArray(records) || records.length < 2) throw new Error('缝合至少需要两张图片');
+        const images = await Promise.all(records.map(async record => decodeExportImage(await imageRecordBlob(record))));
         try {
-            const horizontal = direction === 'horizontal-pairs'; const width = horizontal ? a.width + b.width : Math.max(a.width, b.width); const height = horizontal ? Math.max(a.height, b.height) : a.height + b.height;
+            const horizontal = direction === 'horizontal-pairs'; const width = horizontal ? images.reduce((sum, image) => sum + image.width, 0) : Math.max(...images.map(image => image.width)); const height = horizontal ? Math.max(...images.map(image => image.height)) : images.reduce((sum, image) => sum + image.height, 0);
             if (width > 32767 || height > 32767 || width * height > 180000000) throw new Error(`缝合画布 ${width}×${height} 超过浏览器安全上限，请改用不缝合导出`);
             const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d');
-            ctx.drawImage(a.drawable, 0, 0); ctx.drawImage(b.drawable, horizontal ? a.width : 0, horizontal ? 0 : a.height);
+            let offset = 0; for (const image of images) { ctx.drawImage(image.drawable, horizontal ? offset : 0, horizontal ? 0 : offset); offset += horizontal ? image.width : image.height; }
             const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('浏览器无法编码缝合后的 PNG')), 'image/png'));
             return blob;
-        } finally { a.close(); b.close(); }
+        } finally { images.forEach(image => image.close()); }
     }
     function exportBatchOptions() {
         return readerBatchesForChat(cacheReaderAllRecords, cacheReaderChatId);
     }
     function renderExportBatchStatus() {
-        const key = val('co-export-batch'); const batch = exportBatchOptions().find(item => item.key === key); const status = root.querySelector('#co-export-status');
+        const key = val('co-export-batch'); const batch = exportBatchOptions().find(item => item.key === key); const status = root.querySelector('#co-export-status'); const stitch = val('co-export-stitch'); const vertical = stitch === 'vertical-pairs';
+        root.querySelector('#co-export-vertical-count-field').hidden = !vertical;
         if (!batch) { status.textContent = '当前对话没有可导出的漫画批次。'; return; }
         const pages = readerPagesForChat(cacheReaderAllRecords, cacheReaderChatId, key); const remembered = pages.filter(group => cacheReaderSelections.has(readerSelectionKey(key, group))).length;
-        status.textContent = `${pages.length} 页 · 已明确选择 ${remembered} 页的版本 · 其余采用最新版。奇数末页会保持单页。`;
+        const groupSize = vertical ? Math.min(4, Math.max(2, Number(val('co-export-vertical-count')) || 2)) : (stitch === 'horizontal-pairs' ? 2 : 1);
+        status.textContent = `${pages.length} 页 · 已明确选择 ${remembered} 页的版本 · 其余采用最新版。${groupSize > 1 ? `每组 ${groupSize} 张，末组不足仍会正常缝合或保持单页。` : '每页单独导出。'}`;
     }
     function openBatchExportDialog() {
         const batches = exportBatchOptions(); if (!batches.length) { notify('当前对话没有可导出的漫画批次', 'info'); return; }
@@ -4603,7 +4605,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         select.value = preferred; renderExportBatchStatus(); root.querySelector('#co-export-dialog').showModal();
     }
     async function exportSelectedComicBatch() {
-        const button = root.querySelector('#co-export-confirm'); const status = root.querySelector('#co-export-status'); const batchKey = val('co-export-batch'); const stitch = val('co-export-stitch');
+        const button = root.querySelector('#co-export-confirm'); const status = root.querySelector('#co-export-status'); const batchKey = val('co-export-batch'); const stitch = val('co-export-stitch'); const stitchGroupSize = stitch === 'vertical-pairs' ? Math.min(4, Math.max(2, Number(val('co-export-vertical-count')) || 2)) : 2;
         try {
             button.disabled = true; status.textContent = '正在读取所选版本的本地原图…';
             const groups = readerPagesForChat(cacheReaderAllRecords, cacheReaderChatId, batchKey); if (!groups.length) throw new Error('所选批次没有页面');
@@ -4622,21 +4624,21 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                     exportedPages.push({ order: index + 1, floor: record.targetFloor, page: record.pageNumber, cacheId: record.id, createdAt: record.createdAt, stitched: false });
                 }
             } else {
-                for (let index = 0; index < selectedPages.length; index += 2) {
-                    const first = await imageCacheGet(selectedPages[index].stub.id); const second = selectedPages[index + 1] ? await imageCacheGet(selectedPages[index + 1].stub.id) : null;
-                    if ((!first?.dataUrl && !first?.serverUrl) || (selectedPages[index + 1] && !second?.dataUrl && !second?.serverUrl)) throw new Error(`第 ${index + 1}-${Math.min(index + 2, selectedPages.length)} 页缓存已丢失`);
-                    if (!second) {
-                        const blob = await imageRecordBlob(first); const extension = first.mime === 'image/jpeg' ? 'jpg' : (String(first.mime || '').split('/')[1] || 'png');
-                        files.push({ name: `${String(index + 1).padStart(3, '0')}_last-single.${safeFilename(extension, 'png')}`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date(first.createdAt) });
-                        exportedPages.push({ order: index + 1, floor: first.targetFloor, page: first.pageNumber, cacheId: first.id, stitched: false });
+                for (let index = 0; index < selectedPages.length; index += stitchGroupSize) {
+                    const pageGroup = selectedPages.slice(index, index + stitchGroupSize); const records = await Promise.all(pageGroup.map(page => imageCacheGet(page.stub.id)));
+                    const missingIndex = records.findIndex(record => !record?.dataUrl && !record?.serverUrl); if (missingIndex >= 0) throw new Error(`第 ${index + missingIndex + 1} 页缓存已丢失`);
+                    if (records.length === 1) {
+                        const record = records[0]; const blob = await imageRecordBlob(record); const extension = record.mime === 'image/jpeg' ? 'jpg' : (String(record.mime || '').split('/')[1] || 'png');
+                        files.push({ name: `${String(files.length + 1).padStart(3, '0')}_last-single.${safeFilename(extension, 'png')}`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date(record.createdAt) });
+                        exportedPages.push({ order: files.length, floor: record.targetFloor, page: record.pageNumber, cacheId: record.id, stitched: false });
                     } else {
-                        status.textContent = `正在原尺寸缝合第 ${index + 1}-${index + 2} 页…`;
-                        const blob = await stitchImagePair(first, second, stitch); files.push({ name: `${String(index / 2 + 1).padStart(3, '0')}_${stitch === 'vertical-pairs' ? 'vertical' : 'horizontal'}_pages-${index + 1}-${index + 2}.png`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date() });
-                        exportedPages.push({ order: index / 2 + 1, cacheIds: [first.id, second.id], sourcePages: [{ floor: first.targetFloor, page: first.pageNumber }, { floor: second.targetFloor, page: second.pageNumber }], stitched: stitch });
+                        const end = index + records.length; status.textContent = `正在原尺寸缝合第 ${index + 1}-${end} 页…`;
+                        const blob = await stitchImageRecords(records, stitch); files.push({ name: `${String(files.length + 1).padStart(3, '0')}_${stitch === 'vertical-pairs' ? 'vertical' : 'horizontal'}_pages-${index + 1}-${end}.png`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date() });
+                        exportedPages.push({ order: files.length, cacheIds: records.map(record => record.id), sourcePages: records.map(record => ({ floor: record.targetFloor, page: record.pageNumber })), stitched: stitch });
                     }
                 }
             }
-            const batch = exportBatchOptions().find(item => item.key === batchKey); const manifest = { format: 'comic-orb-export', version: 1, exportedAt: new Date().toISOString(), chatId: cacheReaderChatId, comicBatchId: batchKey, title: batch?.title || '', stitch, lossless: true, pages: exportedPages };
+            const batch = exportBatchOptions().find(item => item.key === batchKey); const manifest = { format: 'comic-orb-export', version: 1, exportedAt: new Date().toISOString(), chatId: cacheReaderChatId, comicBatchId: batchKey, title: batch?.title || '', stitch, stitchGroupSize: stitch === 'none' ? 1 : stitchGroupSize, lossless: true, pages: exportedPages };
             files.push({ name: 'comic-orb-manifest.json', bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 2)), date: new Date() });
             status.textContent = '正在封装无损 ZIP…'; const zip = createStoreZip(files); const filename = `${safeFilename(batch?.title || readerChatLabel(cacheReaderChatId), 'comic')}-${new Date().toISOString().slice(0, 10)}.zip`;
             downloadBlob(zip, filename); status.textContent = `导出完成：${files.length - 1} 个图片文件 · ${formatBytes(zip.size)}。`;
@@ -5290,6 +5292,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-reader-export').addEventListener('click', openBatchExportDialog);
     root.querySelector('#co-export-batch').addEventListener('change', renderExportBatchStatus);
     root.querySelector('#co-export-stitch').addEventListener('change', renderExportBatchStatus);
+    root.querySelector('#co-export-vertical-count').addEventListener('change', renderExportBatchStatus);
     root.querySelector('#co-export-confirm').addEventListener('click', exportSelectedComicBatch);
     root.querySelector('#co-cache-preview-dialog').addEventListener('keydown', event => {
         if (event.target.closest('select,input,textarea,button')) return;
