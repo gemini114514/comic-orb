@@ -633,6 +633,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     let lastModelReasoning = '尚未收到分镜或演绎 API 响应。';
     let lastApiTiming = null;
     let activeRedrawCacheId = '';
+    let activeRedrawDrafts = { pagePrompt: '', sourcePlot: '' };
     let runCooldownTimer = null;
     let runCooldownUntil = 0;
     let processTicker = null;
@@ -3857,8 +3858,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
       </section>
       <dialog class="co-dialog co-full-setup-dialog" id="co-full-setup-dialog"><form method="dialog"><header><strong>完整模式 · 只需在酒馆主机安装一次</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">手机、平板和其他浏览器不需要重复安装。请选择 SillyTavern 后端实际运行的位置，而不是你现在拿来打开网页的设备。</div><nav class="co-dialog-tabs"><button class="active" data-setup-page="pc" type="button">PC 直接用</button><button data-setup-page="phone" type="button">手机直接用</button><button data-setup-page="remote" type="button">远程用</button></nav><section class="co-dialog-page active" data-setup-page="pc"><h3>酒馆运行在 Windows 电脑</h3><ol><li>打开漫画球扩展文件夹。</li><li>双击 <code>install-server-plugin.bat</code>。</li><li>安装器会自动备份配置；酒馆重启后回到这里点“重新检测”。</li></ol><div class="co-callout">常见位置：<code>SillyTavern/public/scripts/extensions/third-party/comic-orb</code></div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="pc" type="button">复制文件位置</button></div></section><section class="co-dialog-page" data-setup-page="phone"><h3>酒馆本身运行在 Android Termux</h3><p>在 Termux 粘贴下面的一行，它会自动寻找漫画球并执行安装：</p><pre id="co-phone-setup-command">p="$(find "$HOME" -type f -path '*/comic-orb/install-server-plugin.sh' -print -quit 2&gt;/dev/null)" &amp;&amp; [ -n "$p" ] &amp;&amp; sh "$p"</pre><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="phone" type="button">复制 Termux 命令</button></div></section><section class="co-dialog-page" data-setup-page="remote"><h3>手机访问的是电脑、NAS、VPS 或 Docker 酒馆</h3><p>手机无需安装任何东西。只需由酒馆主机管理员登录服务器，在漫画球目录运行安装脚本一次；之后所有手机和电脑用户都会自动使用完整模式。</p><pre id="co-remote-setup-command">sh /你的/SillyTavern/漫画球目录/install-server-plugin.sh /你的/SillyTavern</pre><div class="co-callout">Docker 用户需要在保存 SillyTavern 文件的主机或容器内执行；安装完成后重启该酒馆容器。</div><div class="co-dialog-actions"><button class="co-mini co-copy-setup" data-copy-kind="remote" type="button">复制远程命令模板</button></div></section><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button></div></form></dialog>
       <dialog class="co-dialog co-regex-ai-dialog" id="co-regex-ai-dialog"><form method="dialog"><header><strong>AI 辅助制作剧情正则</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-callout">下面的指导词和所选范围未经任何正则处理的完整楼层原文，将作为纯文本发送给当前分镜 API；不会发送参考图、MVU或现有正则处理结果。你可以在发送前补充需要删除或保留的内容。</div><label class="co-field"><span>正则制作指导词（可编辑）</span><textarea id="co-regex-ai-guide">${esc(settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE)}</textarea></label><label class="co-field"><span>将发送的未清洗楼层原文（只读）</span><textarea id="co-regex-ai-source" readonly></textarea></label><div class="co-status" id="co-regex-ai-status">尚未发送。</div><section id="co-regex-ai-result-wrap" hidden><label class="co-field"><span>AI 返回并通过校验的漫画球正则 JSON</span><textarea id="co-regex-ai-result" readonly></textarea></label><label class="co-field"><span>在本次原文上的清洗预览</span><textarea id="co-regex-ai-preview" readonly></textarea></label><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-append" type="button">追加到现有规则</button><button class="co-mini co-test" id="co-regex-ai-replace" type="button">覆盖现有规则</button></div></section><div class="co-dialog-actions"><button class="co-mini" id="co-regex-ai-reset-guide" type="button">恢复默认指导词</button><button class="co-mini" value="cancel">关闭</button><button class="co-mini co-test" id="co-regex-ai-send" type="button">发送给分镜 API</button></div></form></dialog>
-      <dialog class="co-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画页详情</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><nav class="co-dialog-tabs"><button class="active" data-dialog-page="redraw" type="button">重绘</button><button data-dialog-page="prompt" type="button">实际提示词</button></nav><section class="co-dialog-page active" data-dialog-page="redraw"><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><div class="co-callout">确认时会冻结当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></section><section class="co-dialog-page" data-dialog-page="prompt"><textarea id="co-actual-prompt" readonly></textarea><div class="co-dialog-actions"><button class="co-mini" value="cancel">关闭</button><button class="co-mini" id="co-copy-prompt" type="button">复制文本</button></div></section></form></dialog>
-      <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini" id="co-reader-prompt" type="button">查看本页提示词</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
+      <dialog class="co-dialog co-redraw-dialog" id="co-redraw-dialog"><form method="dialog"><header><strong>漫画重绘与提示词编辑器</strong><button class="co-icon" value="cancel" title="关闭">×</button></header><img id="co-redraw-preview" alt="待重绘漫画页"><p id="co-redraw-info"></p><label class="co-check co-dialog-choice"><input id="co-redraw-storyboard" type="checkbox">重新调用分镜 API，再按新 JSON 重绘全部页面</label><label class="co-redraw-editor"><span id="co-redraw-editor-label">当前页分镜提示词</span><textarea id="co-actual-prompt" spellcheck="false"></textarea><small id="co-redraw-editor-help">编辑后的文本会直接作为本页分镜提示词交给绘画阶段。</small></label><div class="co-callout">确认时会冻结编辑后的文本、当前 API 实例、参数、参考图、插入和存储设置，随后转入后台异步执行。不同页可同时重绘；同一页或同一楼层的重新分镜任务会防止重复启动。</div><div class="co-dialog-actions"><button class="co-mini" value="cancel">取消</button><button class="co-mini" id="co-copy-prompt" type="button">复制编辑文本</button><button class="co-mini co-test" id="co-redraw-confirm" type="button">加入后台进程</button></div><div class="co-status" id="co-redraw-status"></div></form></dialog>
+      <dialog class="co-dialog co-cache-preview-dialog" id="co-cache-preview-dialog"><form method="dialog"><header><strong id="co-cache-preview-title">漫画阅读模式</strong><label class="co-reader-chat"><span>对话记录</span><select id="co-reader-chat-select"></select></label><span class="co-reader-counter" id="co-reader-counter"></span><button class="co-icon" value="cancel" title="关闭">×</button></header><div class="co-reader-stage" id="co-reader-stage"><button class="co-reader-nav" id="co-reader-prev" type="button" aria-label="上一页">‹</button><img id="co-cache-preview-image" alt="缓存漫画当前页"><button class="co-reader-nav" id="co-reader-next" type="button" aria-label="下一页">›</button></div><div class="co-reader-meta" id="co-reader-meta"></div><div class="co-reader-jump"><button class="co-mini" id="co-reader-first" type="button" title="跳到第一页">≪</button><label><span>页号</span><select id="co-reader-page-select"></select></label><button class="co-mini" id="co-reader-last" type="button" title="跳到最后一页">≫</button><label><span>版本</span><select id="co-reader-version-select"></select></label></div><div class="co-dialog-actions co-reader-actions"><div class="co-reader-version-actions"><button class="co-mini" id="co-reader-version-newer" type="button" title="键盘方向键上">↑ 较新版本</button><button class="co-mini" id="co-reader-version-older" type="button" title="键盘方向键下">↓ 较旧版本</button></div><button class="co-mini co-test" id="co-reader-prompt" type="button">编辑提示词并重绘</button><button class="co-mini" value="cancel">关闭</button></div></form></dialog>`;
     document.body.appendChild(root);
     bootTrace('root-appended', { childCount: root.childElementCount });
     const setFabVisible = visible => {
@@ -4572,6 +4573,14 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         root.querySelector('#co-reader-next').disabled = cacheReaderIndex >= cacheReaderRecords.length - 1;
         root.querySelector('#co-reader-version-newer').disabled = cacheReaderVersionIndex <= 0;
         root.querySelector('#co-reader-version-older').disabled = cacheReaderVersionIndex >= versions.length - 1;
+        const pageSelect = root.querySelector('#co-reader-page-select');
+        pageSelect.innerHTML = cacheReaderRecords.map((item, index) => `<option value="${index}">${index + 1} · 第 ${item.targetFloor ?? '?'} 楼 / 漫画第 ${item.pageNumber || 1} 页</option>`).join('');
+        pageSelect.value = String(cacheReaderIndex);
+        const versionSelect = root.querySelector('#co-reader-version-select');
+        versionSelect.innerHTML = versions.map((item, index) => `<option value="${index}">${index + 1}/${versions.length}${index === 0 ? ' · 最新' : ''} · ${esc(new Date(item.createdAt).toLocaleString())}</option>`).join('');
+        versionSelect.value = String(cacheReaderVersionIndex);
+        root.querySelector('#co-reader-first').disabled = cacheReaderIndex <= 0;
+        root.querySelector('#co-reader-last').disabled = cacheReaderIndex >= cacheReaderRecords.length - 1;
         root.querySelector('#co-reader-prompt').dataset.cacheId = record.id;
     }
     async function openCacheReader(cacheId = '', suppliedRecords = null) {
@@ -4600,11 +4609,29 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (next === cacheReaderIndex) return;
         cacheReaderIndex = next; cacheReaderVersionIndex = 0; void renderCacheReaderPage();
     }
+    function jumpCacheReader(index) {
+        const next = Math.max(0, Math.min(cacheReaderRecords.length - 1, Number(index) || 0));
+        cacheReaderIndex = next; cacheReaderVersionIndex = 0; void renderCacheReaderPage();
+    }
     function moveCacheReaderVersion(offset) {
         const versions = cacheReaderRecords[cacheReaderIndex]?.versions || [];
         const next = Math.max(0, Math.min(versions.length - 1, cacheReaderVersionIndex + offset));
         if (next === cacheReaderVersionIndex) return;
         cacheReaderVersionIndex = next; void renderCacheReaderPage();
+    }
+    async function refreshOpenCacheReader(preferredCacheId = '') {
+        const dialog = root.querySelector('#co-cache-preview-dialog');
+        if (!dialog?.open) return;
+        const records = (await imageCacheMetadata()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        const preferred = records.find(record => record.id === preferredCacheId)
+            || cacheReaderRecords[cacheReaderIndex]?.versions?.[cacheReaderVersionIndex]
+            || null;
+        cacheReaderAllRecords = records;
+        if (preferred?.test) {
+            cacheReaderRecords = [{ targetFloor: null, pageNumber: 1, versions: [preferred] }]; cacheReaderIndex = 0; cacheReaderVersionIndex = 0;
+            await renderCacheReaderPage(); return;
+        }
+        if (preferred) selectReaderChat(preferred.chatId, preferred);
     }
     async function renderImageCache() {
         const grid = root.querySelector('#co-cache-grid'); const stats = root.querySelector('#co-cache-stats'); const pageInfo = root.querySelector('#co-cache-page-info');
@@ -4626,7 +4653,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             root.querySelector('#co-cache-page-prev').disabled = cacheListPage <= 1;
             root.querySelector('#co-cache-page-next').disabled = cacheListPage >= pageCount;
             if (!metadata.length) { grid.innerHTML = '<div class="co-callout">暂无本地绘画图片缓存。</div>'; return; }
-            grid.innerHTML = visible.map(record => `<article class="co-cache-card" data-cache-id="${esc(record.id)}"><img src="${esc(record.dataUrl)}" alt="缓存图片"><div><strong>${esc(record.test ? 'API 测试图' : `第 ${record.targetFloor ?? '?'} 楼 · 漫画第 ${record.pageNumber || 1} 页`)}</strong><small>${esc(record.test ? '不属于聊天漫画' : readerChatLabel(record.chatId))}</small><small>${esc(record.model || '未知模型')} · ${esc(formatBytes(record.bytes || dataUrlBytes(record.dataUrl)))}</small><small>${esc(new Date(record.createdAt).toLocaleString())}</small></div><div class="co-cache-actions">${record.test ? '' : '<button class="co-mini co-test co-cache-read" type="button">阅读该对话</button>'}<button class="co-mini co-cache-prompt" type="button">提示词</button><button class="co-mini co-cache-export" type="button">导出图片</button>${!record.test && Number.isInteger(record.targetFloor) ? '<button class="co-mini co-cache-restore" type="button">重新上传写回</button>' : ''}<button class="co-mini co-danger co-cache-delete" type="button">删除</button></div></article>`).join('');
+            grid.innerHTML = visible.map(record => `<article class="co-cache-card" data-cache-id="${esc(record.id)}"><img src="${esc(record.dataUrl)}" alt="缓存图片"><div><strong>${esc(record.test ? 'API 测试图' : `第 ${record.targetFloor ?? '?'} 楼 · 漫画第 ${record.pageNumber || 1} 页`)}</strong><small>${esc(record.test ? '不属于聊天漫画' : readerChatLabel(record.chatId))}</small><small>${esc(record.model || '未知模型')} · ${esc(formatBytes(record.bytes || dataUrlBytes(record.dataUrl)))}</small><small>${esc(new Date(record.createdAt).toLocaleString())}</small></div><div class="co-cache-actions">${record.test ? '' : '<button class="co-mini co-test co-cache-read" type="button">阅读该对话</button>'}<button class="co-mini co-cache-prompt" type="button">编辑 / 重绘</button><button class="co-mini co-cache-export" type="button">导出图片</button>${!record.test && Number.isInteger(record.targetFloor) ? '<button class="co-mini co-cache-restore" type="button">重新上传写回</button>' : ''}<button class="co-mini co-danger co-cache-delete" type="button">删除</button></div></article>`).join('');
             grid.querySelectorAll('.co-cache-card > img').forEach(image => image.addEventListener('dblclick', event => {
                 event.preventDefault(); event.stopPropagation(); void openCacheReader(image.closest('.co-cache-card').dataset.cacheId, metadata);
             }));
@@ -4731,10 +4758,21 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         scheduleComicMediaDecoration();
     }
     async function showCachedPrompt(cacheId) {
-        return openRedrawDialog(cacheId, 'prompt');
+        return openRedrawDialog(cacheId);
     }
-    function switchRedrawDialogPage(page) {
-        root.querySelectorAll('#co-redraw-dialog [data-dialog-page]').forEach(element => element.classList.toggle('active', element.dataset.dialogPage === page));
+    function renderRedrawEditorMode() {
+        const textarea = root.querySelector('#co-actual-prompt');
+        const previousMode = textarea.dataset.mode;
+        if (previousMode === 'pagePrompt' || previousMode === 'sourcePlot') activeRedrawDrafts[previousMode] = textarea.value;
+        const reStoryboard = checked('co-redraw-storyboard');
+        const mode = reStoryboard ? 'sourcePlot' : 'pagePrompt';
+        textarea.dataset.mode = mode;
+        textarea.value = activeRedrawDrafts[mode] || '';
+        root.querySelector('#co-redraw-editor-label').textContent = reStoryboard ? '重新分镜使用的原始剧情' : '当前页分镜提示词';
+        root.querySelector('#co-redraw-editor-help').textContent = reStoryboard
+            ? '编辑后的剧情会交给分镜流程，并按新 JSON 重绘这一组的全部页面。'
+            : '编辑后的文本会作为本页分镜提示词交给绘画阶段；不会再次调用分镜 API。';
+        root.querySelector('#co-redraw-confirm').textContent = reStoryboard ? '重新分镜并后台重绘' : '后台重绘本页';
     }
     function switchFullSetupPage(page) {
         root.querySelectorAll('#co-full-setup-dialog [data-setup-page]').forEach(element => element.classList.toggle('active', element.dataset.setupPage === page));
@@ -4748,14 +4786,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         await navigator.clipboard.writeText(text);
         notify(kind === 'pc' ? '文件位置已复制' : '安装命令已复制', 'success');
     }
-    async function openRedrawDialog(cacheId, page = 'redraw') {
+    async function openRedrawDialog(cacheId) {
         const record = await imageCacheGet(cacheId);
         if (!record) { notify('该正文图片对应的本地缓存已被删除，无法重绘', 'error'); return; }
         activeRedrawCacheId = cacheId; root.querySelector('#co-redraw-preview').src = record.dataUrl;
         root.querySelector('#co-redraw-info').textContent = `第 ${record.pageNumber || 1} 页 · ${record.model || '未知模型'} · ${new Date(record.createdAt).toLocaleString()}`;
-        root.querySelector('#co-actual-prompt').value = record.prompt || record.pagePrompt || '';
+        activeRedrawDrafts = { pagePrompt: String(record.pagePrompt || record.prompt || ''), sourcePlot: String(record.sourcePlot || '') };
+        root.querySelector('#co-actual-prompt').dataset.mode = '';
         root.querySelector('#co-redraw-storyboard').checked = false; root.querySelector('#co-redraw-status').textContent = '请选择方式后确认。';
-        switchRedrawDialogPage(page);
+        renderRedrawEditorMode();
         const dialog = root.querySelector('#co-redraw-dialog'); if (!dialog.open) dialog.showModal();
     }
     function currentChatId(ctx = context()) { return String(ctx.chatId || ctx.getCurrentChatId?.() || ''); }
@@ -4827,6 +4866,8 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 await writeLog('result', '异步重新分镜并重绘完成', { oldCacheId: job.oldCacheId, targetFloor: job.targetFloor, insertedIntoFloor: insertEnabled, pages: batch.results.length, wallTime: batch.wallTime, profile: execution.drawingProfile.name });
                 const completionText = insertEnabled ? `已替换 ${batch.results.length} 页` : `已保存 ${batch.results.length} 个新版本，未写回正文`;
                 finishRemoteProcess(processId, 'success', `${completionText} · ${batch.wallTime}`); notify(`第 ${job.targetFloor} 层${completionText}`, 'success');
+                const preferred = batch.results.find(result => Number(result.page) === Number(job.pageNumber)) || batch.results[0];
+                await refreshOpenCacheReader(preferred?.cacheId || '').catch(() => {});
             } else {
                 if (!job.pagePrompt) throw new Error('该缓存缺少原始页分镜提示词，无法单页重绘');
                 const result = checkpoint.singleResult || await callDrawing(job.pagePrompt, { withTiming: true, pageNumber: job.pageNumber, pagePrompt: job.pagePrompt, cacheMeta: { ...cacheMeta, storyboardPlan: job.storyboardPlan }, outputLanguage: execution.outputLanguage || job.storyboardPlan?.language, conf: execution.drawingConf, refs: execution.refs, characterCards: execution.characterCards, profile: execution.drawingProfile, signal });
@@ -4844,6 +4885,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
                 await writeLog('result', '异步漫画单页重绘完成', { oldCacheId: job.oldCacheId, newCacheId: result.cacheId, targetFloor: job.targetFloor, page: job.pageNumber, insertedIntoFloor: insertEnabled, timing: result.timing, profile: execution.drawingProfile.name });
                 const completionText = insertEnabled ? `第 ${job.pageNumber} 页已替换` : `第 ${job.pageNumber} 页新版本已保存，未写回正文`;
                 finishRemoteProcess(processId, 'success', `${completionText} · ${result.timing?.elapsedText || '耗时未知'}`); notify(completionText, 'success');
+                await refreshOpenCacheReader(result.cacheId).catch(() => {});
             }
             redrawLocks.delete(job.lockId);
             workflowCheckpoints.delete(job.id);
@@ -4868,19 +4910,19 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!activeRedrawCacheId) return;
         const button = root.querySelector('#co-redraw-confirm'); const status = root.querySelector('#co-redraw-status');
         const cacheId = String(activeRedrawCacheId); const reStoryboard = checked('co-redraw-storyboard');
+        const editedText = val('co-actual-prompt').trim();
         try {
             syncSettingsFromUi(); await requireLocalProxyReady(); button.disabled = true; status.textContent = '正在建立不可变任务快照…';
             const record = await imageCacheGet(cacheId); if (!record) throw new Error('本地缓存已不存在');
             if (!Number.isInteger(record.targetFloor)) throw new Error('该缓存没有正文目标楼层信息，不能发起重绘');
             const ctx = context(); const chatId = currentChatId(ctx);
             if (record.chatId && chatId && record.chatId !== chatId) throw new Error('当前聊天与该缓存所属聊天不一致，请切回原聊天后重试');
-            if (reStoryboard && !record.sourcePlot) throw new Error('该缓存缺少原始剧情，无法重新分镜');
-            if (!reStoryboard && !record.pagePrompt) throw new Error('该缓存缺少原始页分镜提示词，无法单页重绘');
+            if (!editedText) throw new Error(reStoryboard ? '重新分镜使用的剧情不能为空' : '当前页分镜提示词不能为空');
             const execution = redrawExecutionSnapshot();
             if (reStoryboard && execution.workflowMode === 'interpretive') assertInterpretivePageAllocation(execution.interpretivePageRange, execution.storyboardWorkerPageRange);
             const lockId = acquireRedrawLock({ ...record, chatId: record.chatId || chatId }, reStoryboard);
             const id = newId();
-            const job = Object.freeze({ id, lockId, reStoryboard, oldCacheId: record.id, chatId: record.chatId || chatId, targetFloor: record.targetFloor, pageNumber: Number(record.pageNumber || 1), sourcePlot: String(record.sourcePlot || ''), sourceRange: clone(record.sourceRange || null), pagePrompt: String(record.pagePrompt || ''), storyboardPlan: clone(record.storyboardPlan || null), execution });
+            const job = Object.freeze({ id, lockId, reStoryboard, oldCacheId: record.id, chatId: record.chatId || chatId, targetFloor: record.targetFloor, pageNumber: Number(record.pageNumber || 1), sourcePlot: reStoryboard ? editedText : String(record.sourcePlot || ''), sourceRange: clone(record.sourceRange || null), pagePrompt: reStoryboard ? String(record.pagePrompt || '') : editedText, storyboardPlan: clone(record.storyboardPlan || null), execution });
             root.querySelector('#co-redraw-dialog').close();
             void runRedrawJob(job); notify(`已加入后台：${reStoryboard ? '重新分镜并重绘全部页面' : `重绘第 ${job.pageNumber} 页`}`, 'info');
         } catch (error) { status.textContent = `无法启动：${error.message}`; await writeLog('error', '漫画重绘任务启动失败', { cacheId, result: error.message }); notify(error.message, 'error'); }
@@ -5007,14 +5049,21 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-clear-cache').addEventListener('click', async () => { if (!confirm('确定清空全部本地图片缓存？正文图片不会删除，但所有正文漫画将失去重绘与提示词查看能力。')) return; await imageCacheClear(); cacheListPage = 1; await writeLog('operation', '清空全部本地图片缓存', { result: '完成' }); await renderImageCache(); });
     root.querySelector('#co-reader-prev').addEventListener('click', () => moveCacheReader(-1));
     root.querySelector('#co-reader-next').addEventListener('click', () => moveCacheReader(1));
+    root.querySelector('#co-reader-first').addEventListener('click', () => jumpCacheReader(0));
+    root.querySelector('#co-reader-last').addEventListener('click', () => jumpCacheReader(cacheReaderRecords.length - 1));
+    root.querySelector('#co-reader-page-select').addEventListener('change', event => jumpCacheReader(event.target.value));
+    root.querySelector('#co-reader-version-select').addEventListener('change', event => {
+        cacheReaderVersionIndex = Math.max(0, Number(event.target.value) || 0); void renderCacheReaderPage();
+    });
     root.querySelector('#co-reader-version-newer').addEventListener('click', () => moveCacheReaderVersion(-1));
     root.querySelector('#co-reader-version-older').addEventListener('click', () => moveCacheReaderVersion(1));
     root.querySelector('#co-reader-chat-select').addEventListener('change', event => selectReaderChat(event.target.value));
     root.querySelector('#co-reader-prompt').addEventListener('click', event => {
-        const cacheId = event.currentTarget.dataset.cacheId; root.querySelector('#co-cache-preview-dialog').close();
-        if (cacheId) openRedrawDialog(cacheId, 'prompt').catch(error => notify(error.message, 'error'));
+        const cacheId = event.currentTarget.dataset.cacheId;
+        if (cacheId) openRedrawDialog(cacheId).catch(error => notify(error.message, 'error'));
     });
     root.querySelector('#co-cache-preview-dialog').addEventListener('keydown', event => {
+        if (event.target.closest('select,input,textarea,button')) return;
         if (event.key === 'ArrowLeft') { event.preventDefault(); moveCacheReader(-1); }
         if (event.key === 'ArrowRight') { event.preventDefault(); moveCacheReader(1); }
         if (event.key === 'ArrowUp') { event.preventDefault(); moveCacheReaderVersion(-1); }
@@ -5031,7 +5080,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     }, { passive: true });
     root.querySelector('#co-clear-processes').addEventListener('click', () => { const retained = remoteProcesses.filter(process => ['running', 'paused'].includes(process.status)); remoteProcesses.splice(0, remoteProcesses.length, ...retained); renderProcessCenter(); });
     root.querySelector('#co-redraw-confirm').addEventListener('click', executeRedraw);
-    root.querySelectorAll('#co-redraw-dialog .co-dialog-tabs button').forEach(button => button.addEventListener('click', () => switchRedrawDialogPage(button.dataset.dialogPage)));
+    root.querySelector('#co-redraw-storyboard').addEventListener('change', renderRedrawEditorMode);
     root.querySelector('#co-copy-prompt').addEventListener('click', async () => { try { await navigator.clipboard.writeText(val('co-actual-prompt')); notify('提示词已复制', 'success'); } catch (error) { notify(`复制失败：${error.message}`, 'error'); } });
     root.querySelector('#co-debug-enabled').addEventListener('change', async () => { const enabled = checked('co-debug-enabled'); settings.debug.enabled = enabled; save(); await writeLog('operation', `DEBUG 模式已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续记录完整文本与结构化参数；图片二进制仍排除' : '后续只记录操作与结果简写' }); });
     root.querySelector('#co-capture-model-io').addEventListener('change', async () => { const enabled = checked('co-capture-model-io'); settings.debug.captureModelIo = enabled; save(); await writeLog('operation', `大模型完整输入输出记录已${enabled ? '开启' : '关闭'}`, { result: enabled ? '后续成功与失败的演绎、分镜和绘画调用均保存完整文本；图片二进制与密钥排除' : '后续成功调用恢复简写；语义失败仍保留强制诊断' }); });
