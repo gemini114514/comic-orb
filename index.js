@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.32.1';
+    const COMIC_ORB_VERSION = '1.32.2';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -4616,7 +4616,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             const files = []; const exportedPages = [];
             if (stitch === 'none') {
                 for (let index = 0; index < selectedPages.length; index++) {
-                    const record = await imageCacheGet(selectedPages[index].stub.id); if (!record?.dataUrl) throw new Error(`第 ${selectedPages[index].group.targetFloor} 楼漫画第 ${selectedPages[index].group.pageNumber} 页缓存已丢失`);
+                    const record = await imageCacheGet(selectedPages[index].stub.id); if (!record?.dataUrl && !record?.serverUrl) throw new Error(`第 ${selectedPages[index].group.targetFloor} 楼漫画第 ${selectedPages[index].group.pageNumber} 页缓存已丢失`);
                     const blob = await imageRecordBlob(record); const extension = record.mime === 'image/jpeg' ? 'jpg' : (String(record.mime || '').split('/')[1] || 'png');
                     files.push({ name: `${String(index + 1).padStart(3, '0')}_floor-${record.targetFloor}_page-${record.pageNumber}.${safeFilename(extension, 'png')}`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date(record.createdAt) });
                     exportedPages.push({ order: index + 1, floor: record.targetFloor, page: record.pageNumber, cacheId: record.id, createdAt: record.createdAt, stitched: false });
@@ -4624,7 +4624,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             } else {
                 for (let index = 0; index < selectedPages.length; index += 2) {
                     const first = await imageCacheGet(selectedPages[index].stub.id); const second = selectedPages[index + 1] ? await imageCacheGet(selectedPages[index + 1].stub.id) : null;
-                    if (!first?.dataUrl || (selectedPages[index + 1] && !second?.dataUrl)) throw new Error(`第 ${index + 1}-${Math.min(index + 2, selectedPages.length)} 页缓存已丢失`);
+                    if ((!first?.dataUrl && !first?.serverUrl) || (selectedPages[index + 1] && !second?.dataUrl && !second?.serverUrl)) throw new Error(`第 ${index + 1}-${Math.min(index + 2, selectedPages.length)} 页缓存已丢失`);
                     if (!second) {
                         const blob = await imageRecordBlob(first); const extension = first.mime === 'image/jpeg' ? 'jpg' : (String(first.mime || '').split('/')[1] || 'png');
                         files.push({ name: `${String(index + 1).padStart(3, '0')}_last-single.${safeFilename(extension, 'png')}`, bytes: new Uint8Array(await blob.arrayBuffer()), date: new Date(first.createdAt) });
