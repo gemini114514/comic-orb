@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.29.0';
+    const COMIC_ORB_VERSION = '1.30.0';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -26,8 +26,10 @@
     const STORE_KEY = 'comic-orb.settings.v1';
     const DB_NAME = 'comic-orb-assets';
     const COMIC_MEDIA_TITLE_PREFIX = 'comic-orb:image;';
+    const ADAPTATION_MAX_TOTAL_PAGES = 200;
+    const ADAPTATION_MAX_SEGMENTS = 200;
     const THINKING_NAMES = 'thinking|think|reasoning|analysis';
-    const THINKING_BOUNDARY = '(?=^[ \\t]*<(?:dm_think|content|CheckResult|safe|UpdateVariable)\\b)|(?=^\\[楼层 \\d+\\])|(?![\\s\\S])';
+    const THINKING_BOUNDARY = '(?=^[ \\t]*<(?:dm_think|content|CheckResult|safe|UpdateVariable)\\b)|(?=^\\[楼层 \\d+(?:\\s*\\|[^\\]\\r\\n]+)?\\])|(?![\\s\\S])';
     const THINKING_BRACKET_END = `(?:^[ \\t]*<\\/\\s*(?:${THINKING_NAMES})\\s*>?[ \\t]*$|\\[\\/(?:metacognition|thinking|reasoning|analysis)\\]|${THINKING_BOUNDARY})`;
     const THINKING_XML_END = `(?:<\\/\\s*(?:${THINKING_NAMES})\\s*>?|\\[\\/(?:metacognition|thinking|reasoning|analysis)\\]|${THINKING_BOUNDARY})`;
     const THINKING_CLEANUP_PATTERN = `(?:<(?:${THINKING_NAMES})\\b[^>]*>\\s*)?(?:\\[metacognition\\]|\\[(?:thinking|reasoning|analysis)\\])[\\s\\S]*?${THINKING_BRACKET_END}|<(?:${THINKING_NAMES})\\b[^>]*>[\\s\\S]*?${THINKING_XML_END}`;
@@ -111,10 +113,10 @@
     const DEFAULT_ADAPTATION_SYSTEM_PROMPT = `你是漫画剧情演绎编辑，不是画师，也不是分镜师。你的任务是完整阅读输入剧情，先从叙事层面提炼因果、人物动机、关系变化、冲突升级、关键对白意图、悬念、转折和高潮，再把连续剧情拆成适合后续独立精加工的故事段。不要编写镜头、景别、构图、分格、光影、配色、服装细节、绘画提示词或逐格画面；这些工作全部留给后续分镜AI。
 
 只输出一个严格JSON对象，禁止Markdown、代码块、解释或JSON外文字：
-{"schema_version":"comic_orb_adaptation_v1","language":"本次任务指定的漫画输出语言","title":"总标题","source_summary":"完整剧情的简明总述","dramatic_throughline":"贯穿所有段落的核心矛盾与情绪推进","entity_bible":[{"id":"可选稳定ID","name":"跨段反复出现的实体名","kind":"character|creature|prop|vehicle|other","identity_traits":["剧情明确建立且不可随段落漂移的事实"],"scale_relation":"可选相对体型","persistent_equipment":["可选常驻装备及位置"],"state_changes":["按顺序发生的明确变化"]}],"segments":[{"segment":1,"title":"段落标题","story_purpose":"本段在整体剧情中的功能","refined_plot":"按发生顺序写成完整、紧凑且可独立交给分镜师的剧情；保留关键因果、主体、动作结果与必要环境事实","entry_state":"本段开始时的人物关系、目标、状态和地点","exit_state":"本段结束后的结果、关系、伤势、道具、地点或新目标","key_dialogue_intents":[{"speaker":"角色名","intent":"这句台词必须传达的事实、态度或情绪，不要求照抄原句"}],"climax":"本段唯一主要高潮及其剧情结果","page_count":1,"closeup_guidance":null}]}
+{"schema_version":"comic_orb_adaptation_v1","language":"本次任务指定的漫画输出语言","title":"总标题","source_summary":"完整剧情的简明总述","dramatic_throughline":"贯穿所有段落的核心矛盾与情绪推进","entity_bible":[{"id":"可选稳定ID","name":"跨段反复出现的实体名","kind":"character|creature|prop|vehicle|other","identity_traits":["剧情明确建立且不可随段落漂移的事实"],"scale_relation":"可选相对体型","persistent_equipment":["可选常驻装备及位置"],"state_changes":["按顺序发生的明确变化"]}],"recurring_event_ledger":[{"entity":"反复来袭或多次交锋的主体","occurrences":[{"source_floors":[246,256],"outcome":"第一次事件的准确结果"},{"source_floors":[264,276],"outcome":"第二次事件的准确结果"}]}],"segments":[{"segment":1,"title":"段落标题","source_floors":[90,104],"story_purpose":"本段在整体剧情中的功能","must_preserve_beats":["后续分镜不可删除或合并的节点"],"event_instances":["可选：主体#第1次来袭"],"refined_plot":"按发生顺序写成完整、紧凑且可独立交给分镜师的剧情；保留关键因果、主体、动作结果与必要环境事实","entry_state":"本段开始时的人物关系、目标、状态和地点","exit_state":"本段结束后的结果、关系、伤势、道具、地点或新目标","key_dialogue_intents":[{"speaker":"角色名","intent":"这句台词必须传达的事实、态度或情绪，不要求照抄原句"}],"climax":"本段唯一主要高潮及其剧情结果","page_count":1,"closeup_guidance":null}]}
 
 硬性规则：
-1. segments必须为1到20段并覆盖全部输入剧情，segment从1连续编号；相邻段不得重复同一事件，后一段必须从前一段exit_state之后继续。
+1. segments必须为1到200段并覆盖全部输入剧情，segment从1连续编号；相邻段不得重复同一事件，后一段必须从前一段exit_state之后继续。实际段数应服从漫画球在请求末尾给出的总页数范围与单个分镜AI页数规格，不要为了接近上限机械拆碎剧情。
 2. 每段page_count必须服从漫画球在请求末尾给出的“单个分镜AI页数规格”，该规格可能是固定数字，也可能是范围。根据剧情密度、转折数量和高潮分量选择，不能为了增加页数重复动作或对白；所有段落总页数还必须落在用户指定的总页数范围。
 3. refined_plot必须专注剧情，明确“谁—为什么—做什么—造成什么结果—下一步目标”。可重排、合并或润色原文，使漫画改编更紧凑，但不得改变核心结局、人物关系或关键设定。
 4. key_dialogue_intents记录对白的叙事作用与说话者，不写气泡样式，不要求逐字照抄小说，也不要让所有角色沉默。
@@ -285,6 +287,17 @@ climax_panel仅表示本页最有表现力的现有格，可以是发现、表�
 原文以未知声音、黑影、开门前、攻击前、身份未揭示或其他悬念结束时，refined_plot、segments和最后一个exit_state必须停在完全相同的信息边界；未知对象沿用原称呼或中性描述，不得依据作品名称、世界观常识、MVU、类型套路或模型记忆推断真相。
 MVU只用于确认当前已成立的状态、装备、关系和地点，不是未来提纲。entity_bible只能摘录输入或MVU明确存在的实体和事实，没有外貌描述时留空，禁止补齐常见形象。
 总页数和单个分镜AI页数是用户要求的成品容量。需要分配更多页时，只能拆分现有剧情节拍、人物反应、因果与关系变化，不得靠新增事件或重复同一事件凑页。每个segment必须是原文中可定位的连续范围，后续分镜不得被要求越过该范围。`;
+    const ADAPTATION_LONGFORM_COVERAGE_RULE = `【漫画球长篇演绎覆盖协议——高优先级】
+输入按楼层提供，并可能显式标注 USER 或 ASSISTANT。先在内部按楼层顺序建立事件账本再规划段落；不要输出思考过程或账本草稿，只输出最终JSON。
+
+1. USER楼层通常表达玩家下一步行动、选择、补充条件或对上一轮事实的纠正；ASSISTANT楼层通常叙述该行动如何实际发生及其结果。不得只读其中一类，也不得把USER的幕后指令、格式要求或配置文字直接写成角色对白。USER行动在紧随其后的ASSISTANT楼层被落实时，以实际叙述结果为准；后续楼层明确纠正早先状态时，以后出现的明确事实为准，并让纠正后的状态贯穿后文。
+2. 每个会改变后续理解的节点都必须进入某个segment.refined_plot：新目标或决定、重要人物首次介入、来访侦察及其带走的信息、结盟邀请与谈判、背叛与立场变化、关键情报揭露、伏笔与兑现、战斗发起者和胜负结果、撤退或生死未明、同一敌人的再次出现、契约/令咒/装备/伤势/关系/地点的不可逆变化、旧方案失败后的新方案，以及结局去向。一次来访即使没有开战，只要交换了情报、条件或口信，也是一项独立事件。日常重复动作、不改变状态的数值播报和同义复述可以压缩。
+3. 不得把人物相同、招式相似或地点相同的多次事件合成一次。两次袭击、两次谈判、假胜利后的再战、撤退后的追击、第一次未知结果与第二次确认结果，必须按原顺序保留为不同节拍。看到“再次、又、重新、追击、撤退后、数日后”等复现信号时，在内部给同一主体的事件编号；输出顶层recurring_event_ledger，并在对应段event_instances中写“主体#第1次来袭”“主体#第2次来袭”等简短标记。每次的来源、起因和结果还必须写入refined_plot，不能只藏在账本字段。人物后来再次出现时，先确认前文究竟是死亡、撤退、失踪、生死未明还是误判；禁止为消除表面矛盾而改写结果。
+4. 长篇输入先完整覆盖，再追求简洁。总页数上限是可用叙事容量，不是应当尽量节省的成本：仍有独立转折、因果、关系变化或战斗阶段没有画幅时，继续增加段落或页数；只有剩余内容能在不丢节点的前提下合并，才可低于上限。禁止用重复动作、同义对白或无新结果的气氛描写凑页。
+5. 每个segment输出source_floors、must_preserve_beats和可选event_instances。source_floors固定为该段负责的连续输入范围[start,end]；第一段从输入第一楼开始，最后一段到输入最后一楼结束，相邻段按输入中实际出现的楼层顺序无缺口、无重叠衔接。若用户关闭了USER楼层，数字不连续属于正常情况，按下一个实际出现的楼层衔接。即使USER楼层只是简短选择，也把它划入实现该选择的相邻段。输入超过100楼时，以12个实际输入楼层为单段默认上限；只有整段确实在完成同一个不可分割事件，且逐楼检查没有新来访者、目标、情报、谈判、关系变化、冲突阶段或结果时才可放宽，但绝不超过18个实际输入楼层。发现范围过大必须继续拆段。
+6. must_preserve_beats按顺序列出后续分镜绝不能删除或互相合并的节点，通常2-6项；所有节点同时自然写入refined_plot。分段边界优先放在目标变化、地点/时间切换、关系逆转、一次交锋结束或新危机开始处。entry_state只写开始前已成立状态，exit_state只写结束后已成立状态；后一段从前一段exit_state之后推进，不重画上一段高潮。
+7. 覆盖完整不等于冗长。source_summary保持简明，entity_bible只留跨段易漂移事实；每段refined_plot通常150-350个汉字，复杂高潮允许略长。删掉同义复述、气氛堆叠、技能数值和不改变剧情的过程，但不能借精简删除独立事件。应把输出容量用于更多准确的小段，而不是把少数段写成小说，以免严格JSON在结尾被截断。
+8. 输出前静默三检：先确认source_floors按实际输入顺序从首楼到末楼完整分区；再逐楼确认每个改变后续理解的节点同时进入must_preserve_beats与refined_plot；最后从末段倒查因果、人物去向、道具/契约状态、同一主体来袭次数和结局。发现遗漏、事件融合、时间倒置或无来源扩写时，内部修正后再一次性输出最终JSON。楼层号、审计数组或recurring_event_ledger只是软审计信息，少量格式误差不得成为拒绝或停止输出的理由。`;
     const STORYBOARD_GAZE_RULE = `【漫画球中性视觉措辞规则——高优先级】
 角色的身高、体型、曲线、服装和原文已有镜头都可以保持，不得通过削弱身材、改变服装、添加非原设定面部特征、回避正常身体轮廓或修改参考图来规避风险。限制的是描述语法中的评价性、消费性和情色化措辞，不是镜头类型；全身、近景、低机位、主观视角、动作中的服装与身体动态均可在剧情需要时正常使用。
 characters、panels和page_prompt使用客观、可视、制作导向的语言描述同一画面，例如身高与体格、整体轮廓、服装剪裁、姿态、运动惯性、呼吸、疲劳和环境影响。原文中从观看者欲望出发的身体价值判断、尺寸标签或消费性修辞，只改写成等价的整体外形事实与人物反应，不把原措辞带入输出。
@@ -410,11 +423,27 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return `${text}\n\n${STORYBOARD_CLOSED_WORLD_RULE}`;
     }
     function upgradeAdaptationClosedWorld(value) {
-        const text = upgradeAdaptationSoftFilter(value).replace(ADAPTATION_CLOSED_WORLD_RULE, '').trim();
-        return `${text}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
+        const text = upgradeAdaptationSoftFilter(value)
+            .replace(ADAPTATION_LONGFORM_COVERAGE_RULE, '')
+            .replace(ADAPTATION_CLOSED_WORLD_RULE, '')
+            .trim();
+        return `${text}\n\n${ADAPTATION_LONGFORM_COVERAGE_RULE}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
+    }
+    function upgradeAdaptationPageCapacity(value) {
+        return String(value || '')
+            // 迁移早期内置预设；只改演绎结构规则，不碰“至少20岁”等无关数字。
+            .replace(/segments必须为1到(?:8|20)段/g, `segments必须为1到${ADAPTATION_MAX_SEGMENTS}段`)
+            .replace(/完整剧情只允许拆成1到20段/g, `完整剧情最多拆成${ADAPTATION_MAX_SEGMENTS}段`)
+            .replace(
+                /每段page_count只能是1、2或3。根据剧情密度、转折数量和高潮分量选择，不能为了增加页数重复动作或对白；所有段落总页数不得超过20。/g,
+                '每段page_count必须服从漫画球在请求末尾给出的“单个分镜AI页数规格”，该规格可能是固定数字，也可能是范围。根据剧情密度、转折数量和高潮分量选择，不能为了增加页数重复动作或对白；所有段落总页数必须落在请求末尾指定的范围。'
+            )
+            .replace(/所有段落总页数不得超过20(?!\d)/g, `所有段落总页数不得超过${ADAPTATION_MAX_TOTAL_PAGES}`)
+            .replace(/每段1到3页；总页数不超过20；/g, '每段页数与总页数均服从漫画球在请求末尾给出的本次任务变量；')
+            .replace(/总页数不超过20(?!\d)/g, `总页数不超过${ADAPTATION_MAX_TOTAL_PAGES}`);
     }
     function upgradeAdaptationSoftFilter(value) {
-        let text = String(value || '').replace(
+        let text = upgradeAdaptationPageCapacity(value).replace(
             '6. 不要关心合规视觉转换，不要因为潜在绘制难度削弱剧情。只在剧情层面保持冲突、代价、暧昧关系和结局完整，具体怎么画由后续分镜AI处理。',
             '6. 在剧情层面保留冲突、代价、暧昧关系和结局。若原文存在不适合直接转成画面的极端桥段，只做最低限度的叙事提炼：完整保留人物动机、权力关系、行为方向、因果和结果，用含蓄动作、场外信息、人物反应或事后状态表达，不展开多余的身体、生理或解剖细节。只输出提炼后的剧情，不讨论平台规则、过滤过程或被舍弃的原始表达；具体镜头仍交给后续分镜AI。'
         );
@@ -1453,12 +1482,17 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const chunks = [];
         const floors = [];
         const skippedUserFloors = [];
+        const includeRoleMarkers = options.excludeUserFloors === false;
         for (let i = start; i <= end; i++) {
             const msg = ctx.chat[i];
             if (!msg) continue;
             if (msg.is_user === true && options.excludeUserFloors !== false) { skippedUserFloors.push(i); continue; }
             const name = msg.name || (msg.is_user ? ctx.name1 : ctx.name2) || (msg.is_user ? 'User' : 'Character');
-            chunks.push(options.includeNames ? `[楼层 ${i}] ${name}:\n${msg.mes ?? ''}` : `[楼层 ${i}]\n${msg.mes ?? ''}`);
+            const role = msg.is_user === true ? 'USER' : 'ASSISTANT';
+            const header = includeRoleMarkers
+                ? `[楼层 ${i} | ${role}${options.includeNames ? ` | ${name}` : ''}]`
+                : (options.includeNames ? `[楼层 ${i}] ${name}:` : `[楼层 ${i}]`);
+            chunks.push(`${header}\n${msg.mes ?? ''}`);
             floors.push(i);
         }
         return { text: applyRegexRules(chunks.join('\n\n'), options.regexList), floors, skippedUserFloors };
@@ -2399,7 +2433,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     async function callAdaptation(plot, options = {}) {
         const conf = options.conf || settings.adaptation;
         const outputLanguage = normalizeOutputLanguage(options.outputLanguage || settings.outputLanguage);
-        const totalPageRange = normalizeStoryboardRange(options.totalPageRange?.min, options.totalPageRange?.max, 2, 8, 20);
+        const totalPageRange = normalizeStoryboardRange(options.totalPageRange?.min, options.totalPageRange?.max, 2, 8, ADAPTATION_MAX_TOTAL_PAGES);
         const workerPageRange = normalizeWorkerPageSpec(options.workerPageRange || settings.storyboardWorkerPages);
         const stylePromptEnabled = Object.prototype.hasOwnProperty.call(options, 'stylePromptEnabled')
             ? Boolean(options.stylePromptEnabled)
@@ -2434,7 +2468,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const adaptationStyleRule = stylePromptEnabled
             ? `【演绎模式原作画风分析——读取完整剧情一次】你能够看到未切分的完整剧情，因此由你在演绎阶段完成一次画风识别。严格按照下面的独立画风提示词分析，并在顶层输出source_style_analysis，字段形状为${COMIC_STYLE_ANALYSIS_SCHEMA}。该对象只记录跨段共享的高层视觉语言，不得写进segments、不得加入镜头/分格/绘画提示词，也不得改变剧情；后续每个分镜AI会直接继承它且不会重新猜测。\n${stylePrompt}`
             : '【演绎模式画风分析】独立画风提示词已关闭；不要输出source_style_analysis，也不要确认或猜测原作画风。';
-        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量】漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。完整剧情只允许拆成1到20段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。你只负责剧情演绎与分段；除顶层可选source_style_analysis外，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。${characterOverrideRule}\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${adaptationStyleRule}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
+        const sourceFloorNumbers = [...transportPlot.text.matchAll(/^\[楼层\s+(\d+)(?:\s*\|[^\]\r\n]+)?\]/gm)].map(match => Number(match[1])).filter(Number.isInteger);
+        const sourceFloorNote = sourceFloorNumbers.length
+            ? `本次实际发送 ${sourceFloorNumbers.length} 个楼层，按输入出现顺序从楼层 ${sourceFloorNumbers[0]} 到 ${sourceFloorNumbers.at(-1)}；source_floors必须覆盖这些实际出现的楼层。${sourceFloorNumbers.length > 100 ? '这是长篇输入，应启用长篇覆盖协议的分区、重复事件编号与逆向核对。' : ''}`
+            : '本次正文没有可靠楼层标记；source_floors可以使用空数组，但仍须覆盖全部剧情事件。';
+        const effectiveSystemPrompt = `${systemPrompt}\n\n【漫画球本次任务变量（最高优先级）】本节覆盖前文或用户已保存旧预设中任何固定的总页数、段数与单段页数限制。漫画输出语言为“${outputLanguage}”；顶层language必须逐字写成“${outputLanguage}”。用户要求最终总页数为 ${totalPageRange.min}-${totalPageRange.max} 页，所有segments的page_count之和必须落在该范围内。${sourceFloorNote}完整剧情最多拆成${ADAPTATION_MAX_SEGMENTS}段；每段会独占一个并发分镜AI，本次“单个分镜AI页数规格”为${workerRule}，所以每个segment.page_count都必须符合该规格。你负责根据剧情密度自行决定段数；规格是范围时再自行决定每段具体页数，不要平均主义，也不要靠重复事件凑页数。若总页数上限明显高于旧任务，应把新增容量用于此前没有画幅的独立事件、反转和关系变化，而不是扩写已覆盖事件。你只负责剧情演绎与分段；除顶层可选source_style_analysis外，不得输出镜头、构图、分格、光影、配色、画风、服装细节或绘画提示词。每段closeup_guidance最多一个且只写对象与剧情作用。\n【漫画球可选实体设定】可以在顶层输出entity_bible，也可以在纯景色、一次性场景或没有明显连续性风险时省略它或输出空数组。它只是一份给并发分镜AI共享的简短剧情事实备忘录：适合记录跨段实体的稳定身份、明确数量特征、相对体型、常驻装备位置和按顺序发生的损坏、丢弃、换装或伤势变化；不要扩写镜头、构图、光影、配色、画风或原文没有建立的外观细节。entity_bible不是硬格式，字段缺失、拼写差异或局部措辞不统一都不影响工作流，不得因此拒绝输出。\n【漫画球外貌事实提取】尽量把原文明确写出的跨段角色外貌准确摘录到对应entity_bible.identity_traits，包括发色、发型、瞳色、肤色、体型、种族特征、服装和其他稳定辨识点。只摘录原文明示事实，不从姓名、种族、职业、世界观或常见形象推测；原文没有描述的项目留空或省略。不要为补齐字段牺牲剧情提炼，也不要把外貌扩写成镜头或绘画说明。${characterOverrideRule}\n【本次成人身份约束】本作品中的所有拟人角色均为至少20岁的成年人。该约束只用于防止年龄误判，不得改变参考图外观、身材、服装、动作或原剧情镜头，也不得在输出中写具体年龄或任何年龄/学龄称谓。\n\n${ADAPTATION_NEUTRAL_WORDING_RULE}\n\n${adaptationStyleRule}\n\n${ADAPTATION_CLOSED_WORLD_RULE}`;
         const extras = apiExtras(conf);
         const body = {
             model: conf.model,
@@ -2457,7 +2495,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     function parseAdaptationPlan(raw, outputLanguage = settings.outputLanguage, totalPageRange = settings.interpretivePageRange, workerPageRange = settings.storyboardWorkerPages, stylePromptEnabled = settings.storyboard.stylePromptEnabled !== false) {
         const plan = parseModelJson(raw, '演绎');
         const expectedLanguage = normalizeOutputLanguage(outputLanguage);
-        const expectedPages = normalizeStoryboardRange(totalPageRange?.min, totalPageRange?.max, 2, 8, 20);
+        const expectedPages = normalizeStoryboardRange(totalPageRange?.min, totalPageRange?.max, 2, 8, ADAPTATION_MAX_TOTAL_PAGES);
         const expectedWorkerPages = normalizeWorkerPageSpec(workerPageRange);
         assertInterpretivePageAllocation(expectedPages, expectedWorkerPages);
         const errors = [];
@@ -2479,7 +2517,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         } else if (Object.prototype.hasOwnProperty.call(plan, 'source_style_analysis')) {
             delete plan.source_style_analysis;
         }
-        if (!Array.isArray(plan.segments) || plan.segments.length < 1 || plan.segments.length > 20) errors.push(`segments 必须为1到20项，实际为 ${Array.isArray(plan.segments) ? plan.segments.length : '非数组'}`);
+        if (!Array.isArray(plan.segments) || plan.segments.length < 1 || plan.segments.length > ADAPTATION_MAX_SEGMENTS) errors.push(`segments 必须为1到${ADAPTATION_MAX_SEGMENTS}项，实际为 ${Array.isArray(plan.segments) ? plan.segments.length : '非数组'}`);
         let totalPages = 0;
         if (Array.isArray(plan.segments)) plan.segments.forEach((segment, index) => {
             const n = index + 1;
@@ -2492,6 +2530,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             if (!String(segment.entry_state || '').trim()) segment.entry_state = '按本段剧情自然进入';
             if (!String(segment.exit_state || '').trim()) segment.exit_state = '按本段剧情自然结束';
             if (!String(segment.climax || '').trim()) segment.climax = '由分镜AI根据本段剧情自行判断';
+            segment.source_floors = Array.isArray(segment.source_floors)
+                ? segment.source_floors.map(value => Number(value)).filter(Number.isInteger)
+                : [];
+            segment.must_preserve_beats = Array.isArray(segment.must_preserve_beats)
+                ? segment.must_preserve_beats.map(value => String(value || '').trim()).filter(Boolean)
+                : [];
+            segment.event_instances = Array.isArray(segment.event_instances)
+                ? segment.event_instances.map(value => String(value || '').trim()).filter(Boolean)
+                : [];
             const pages = Number(segment.page_count ?? segment.pageCount ?? segment.pages);
             segment.page_count = pages;
             if (!Number.isInteger(pages) || pages < expectedWorkerPages.min || pages > expectedWorkerPages.max) errors.push(`演绎段 ${n} 的page_count必须${expectedWorkerPages.min === expectedWorkerPages.max ? `固定为${expectedWorkerPages.min}` : `在${expectedWorkerPages.min}-${expectedWorkerPages.max}范围内`}`);
@@ -2515,15 +2562,22 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         const sharedStyle = Object.prototype.hasOwnProperty.call(adaptation || {}, 'source_style_analysis')
             ? JSON.stringify(normalizeSourceStyleAnalysis(adaptation.source_style_analysis))
             : '独立画风提示词已关闭；本段不额外确认原作画风。';
+        const recurringEvents = Array.isArray(adaptation?.recurring_event_ledger) && adaptation.recurring_event_ledger.length
+            ? JSON.stringify(adaptation.recurring_event_ledger)
+            : '未提供；仍须根据本段event_instances区分同一主体的多次事件。';
         return `这是上游剧情演绎编辑交付的第 ${segment.segment}/${adaptation.segments.length} 段。请只对本段进行精细漫画分镜，不要重新扩写其他段落，也不要重复上一段结束事件。
 
 总标题：${adaptation.title}
 全局剧情主线：${adaptation.dramatic_throughline}
 全局共享entity_bible（软约束，不参与格式校验）：${sharedEntityBible}
 全局共享source_style_analysis（唯一画风依据，不得按局部剧情重新猜测）：${sharedStyle}
+全局重复事件账本（用于区分同一主体的多次来袭、撤退与再战）：${recurringEvents}
 本段标题：${segment.title}
+本段来源楼层：${JSON.stringify(segment.source_floors || [])}
 本段叙事作用：${segment.story_purpose}
 进入状态：${segment.entry_state}
+本段不可删除或互相合并的剧情节点：${JSON.stringify(segment.must_preserve_beats || [])}
+本段重复事件编号：${JSON.stringify(segment.event_instances || [])}
 精炼剧情：${segment.refined_plot}
 关键对白意图：${JSON.stringify(segment.key_dialogue_intents)}
 唯一主要高潮：${segment.climax}
@@ -2533,7 +2587,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
 
 把上述剧情材料转成完整的comic_orb_storyboard_v1 JSON。entity_bible可沿用、补充、简化或在不需要时省略；不要因为其中缺字段、拼写差异或轻微矛盾而停止工作。若提供了source_style_analysis，必须把它写入global_style并落实到本段全部page_prompt，禁止重新识别作品或另造画风。所有page_prompt仍须完全自包含；本段第一页从进入状态之后开始，本段最后一页必须到达结束状态。
 
-【本段剧情边界】本段材料是封闭范围，只能表现精炼剧情中已经存在的事件，并严格停在“结束状态”。全局主线只帮助理解上下文，不授权提前表现其他段落；不得依据世界观、MVU或类型常识揭示本段未命名对象、补写下一事件或创造新的高潮。固定页数需要更多画幅时，拆分现有动作、反应、环境与情绪节拍，不得新增或重复剧情事实。`;
+【本段剧情边界】本段材料是封闭范围，只能表现精炼剧情中已经存在的事件，并严格停在“结束状态”。must_preserve_beats中的每项都必须在pages与page_prompt中获得清楚、可辨认的叙事位置，不得因页数紧张删除，也不得把event_instances标记的第1次与第2次事件合成同一场。全局主线和重复事件账本只帮助理解上下文，不授权提前表现其他段落；不得依据世界观、MVU或类型常识揭示本段未命名对象、补写下一事件或创造新的高潮。固定页数需要更多画幅时，拆分现有动作、反应、环境与情绪节拍，不得新增或重复剧情事实。`;
     }
     function combineAdaptedStoryboardPlans(adaptation, segmentResults) {
         const pages = []; const characters = []; const characterKeys = new Set();
@@ -2657,12 +2711,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         return { min, max, spec: min === max ? String(min) : `${min}-${max}` };
     }
     function assertInterpretivePageAllocation(totalPageRange, workerPageRange) {
-        const totals = normalizeStoryboardRange(totalPageRange?.min, totalPageRange?.max, 2, 8, 20);
+        const totals = normalizeStoryboardRange(totalPageRange?.min, totalPageRange?.max, 2, 8, ADAPTATION_MAX_TOTAL_PAGES);
         const worker = normalizeWorkerPageSpec(workerPageRange);
         let possible = new Set([0]); const attainable = new Set();
-        for (let segmentCount = 1; segmentCount <= 20; segmentCount++) {
+        for (let segmentCount = 1; segmentCount <= ADAPTATION_MAX_SEGMENTS; segmentCount++) {
             const next = new Set();
-            for (const sum of possible) for (let pages = worker.min; pages <= worker.max; pages++) if (sum + pages <= 20) next.add(sum + pages);
+            for (const sum of possible) for (let pages = worker.min; pages <= worker.max; pages++) if (sum + pages <= ADAPTATION_MAX_TOTAL_PAGES) next.add(sum + pages);
             possible = next;
             for (const sum of possible) if (sum >= totals.min && sum <= totals.max) attainable.add(sum);
             if (!possible.size) break;
@@ -3508,7 +3562,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             range: String(settings.range), includeNames: Boolean(settings.includeNames), excludeUserFloors: settings.excludeUserFloors !== false, includeMvuData: Boolean(settings.includeMvuData), preflightNeutralize: Boolean(settings.preflightNeutralize), regexList: clone(settings.regexList),
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
-            interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
+            interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, ADAPTATION_MAX_TOTAL_PAGES),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
             adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
@@ -3688,15 +3742,15 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
           <div class="co-page active" data-page="make"><div class="co-proxy-health co-proxy-checking" id="co-proxy-health"><strong>API 连接模式</strong><span id="co-proxy-health-text">正在读取连接模式…</span><div class="co-mode-controls"><select id="co-backend-mode" aria-label="API 连接模式"><option value="basic" ${settings.backendMode !== 'full' ? 'selected' : ''}>基础模式</option><option value="full" ${settings.backendMode === 'full' ? 'selected' : ''}>完整模式</option></select><button class="co-mini" id="co-proxy-recheck" type="button">重新检测</button><button class="co-mini co-test" id="co-full-setup" type="button">完整模式安装</button></div></div><div class="co-grid">
             <label class="co-field"><span>楼层范围（闭区间）</span><input id="co-range" placeholder="例如 10-12" value="${esc(settings.range)}"></label>
             <label class="co-field"><span>分镜工作流模式</span><select id="co-workflow-mode"><option value="direct" ${settings.workflowMode !== 'interpretive' ? 'selected' : ''}>直接分镜模式</option><option value="interpretive" ${settings.workflowMode === 'interpretive' ? 'selected' : ''}>演绎分镜模式</option></select></label>
-            <label class="co-field"><span>演绎模式总页数最少</span><input id="co-interpretive-min-pages" type="number" min="1" max="20" value="${esc(settings.interpretivePageRange?.min ?? 2)}"></label>
-            <label class="co-field"><span>演绎模式总页数最多</span><input id="co-interpretive-max-pages" type="number" min="1" max="20" value="${esc(settings.interpretivePageRange?.max ?? 8)}"></label>
+            <label class="co-field"><span>演绎模式总页数最少</span><input id="co-interpretive-min-pages" type="number" min="1" max="200" value="${esc(settings.interpretivePageRange?.min ?? 2)}"></label>
+            <label class="co-field"><span>演绎模式总页数最多</span><input id="co-interpretive-max-pages" type="number" min="1" max="200" value="${esc(settings.interpretivePageRange?.max ?? 8)}"></label>
             <label class="co-field"><span>单个分镜 AI 负责页数</span><input id="co-storyboard-worker-pages" value="${esc(settings.storyboardWorkerPages || '1-3')}" placeholder="固定值如 2，或范围如 1-3"></label>
             <label class="co-field"><span>漫画对白与可见文字语言</span><input id="co-output-language" list="co-output-language-options" value="${esc(String(settings.outputLanguage || 'zh-CN'))}" placeholder="例如 zh-CN、auto、ja-JP、en-US"><datalist id="co-output-language-options"><option value="zh-CN">简体中文（默认）</option><option value="auto">跟随浏览器语言</option><option value="zh-TW">繁體中文</option><option value="zh-HK">繁體中文（香港）</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">français</option><option value="de-DE">Deutsch</option><option value="es-ES">español</option></datalist></label>
             <label class="co-field"><span>图片替代文字</span><input id="co-alt" value="${esc(settings.insert.alt)}"></label>
             <label class="co-check co-full"><input id="co-names" type="checkbox" ${settings.includeNames ? 'checked' : ''}>发送剧情时保留角色名和楼层号</label>
             <label class="co-check co-full"><input id="co-exclude-user-floors" type="checkbox" ${settings.excludeUserFloors !== false ? 'checked' : ''}>不发送 User 类型楼层（默认开启；关闭后 User 楼也加入剧情正文）</label>
             <div class="co-full"><div class="co-inline co-list-head"><span class="co-label">剧情正则规则（按列表顺序执行）</span><div class="co-list-actions"><button class="co-mini co-test" id="co-ai-regex" type="button">AI 辅助制作正则</button><button class="co-mini" id="co-tag-preset" type="button">标签清理预设</button><button class="co-mini" id="co-import-regex" type="button">导入 JSON</button><input id="co-import-regex-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-regex" type="button">导出 JSON</button><button class="co-mini" id="co-test-regex" type="button">测试正则</button><button class="co-mini" id="co-add-regex" type="button">＋ 新增规则</button></div></div><div id="co-regex-list"></div><label class="co-field co-regex-preview-wrap" id="co-regex-preview-wrap"><span>最终发送文本预览（剧情正则 → MVU → 可选前置清洗；未发送、未写回）</span><textarea class="co-regex-preview" id="co-regex-preview" readonly></textarea></label></div>
-            <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-20页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画阶段同时受最大并发数和启动间隔约束；范围包含首尾且自动剔除User楼。每次提交会冻结剧情、API、参考图和写回目标，调度间隔、最大绘画并发、重试与日志设置则在阶段开始或重试时读取最新值。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
+            <div class="co-callout co-full">直接分镜模式沿用原流程：剧情→分镜→绘画。演绎分镜模式为：剧情演绎→按故事段并发分镜→错峰并发绘画；用户决定1-200页内的总页数范围，并可用单独数字（如<code>2</code>）固定每个分镜AI的页数，或用范围（如<code>1-3</code>）让演绎AI按剧情密度分配。提交前会检查两种页数设置能否组合。大页数用于测试模型和服务边界，会显著增加分镜调用数量、输出长度、耗时与失败概率。演绎只提炼剧情、因果、对白意图与高潮，不处理具体画面。绘画阶段同时受最大并发数和启动间隔约束；范围包含首尾且自动剔除User楼。每次提交会冻结剧情、API、参考图和写回目标，调度间隔、最大绘画并发、重试与日志设置则在阶段开始或重试时读取最新值。也可以直接双击没有图片的非User对话楼层，立即以该层剧情启动一个新的直接分镜后台任务。</div>
           </div><button class="co-run" id="co-run">生成并发分页漫画并插入末层</button><div class="co-status" id="co-status">等待开始。直接模式需配置分镜与绘画 API；演绎模式还需配置独立演绎 API。</div></div>
           <div class="co-page" data-page="processes"><div class="co-process-toolbar"><div><strong>后台远端进程</strong><small id="co-process-summary">0 个运行中 · 0 个等待处理 · 0 个已结束</small></div><button class="co-mini" id="co-clear-processes" type="button">清除已结束</button></div><div class="co-callout">这里统一显示整套漫画工作流、演绎、分镜、绘画、模型列表、API 测试、远程图片下载和酒馆图片上传。总工作流任一子任务失败时会立即暂停并持久化成功检查点；即使按 F5 或关闭后重新打开页面，也会恢复为等待处理。“重试失败阶段”只补失败或未完成项，“抛弃总任务”才释放检查点，已经持久化的本地图片仍不会删除。运行中的 Cancel 会立即中止并结束该任务。</div><div class="co-process-list" id="co-process-list"><div class="co-callout">暂无后台远端任务。</div></div></div>
           <div class="co-page" data-page="refs"><div class="co-callout">参考图以命名预设管理，每套最多四张图及对应提示词。参考图只发送给启用了参考图的绘画 AI，不发送给演绎或分镜 AI；图片和预设均保存在当前浏览器 IndexedDB。</div><div class="co-profile-manager co-ref-preset-manager"><div class="co-profile-top"><label class="co-field"><span>参考图预设</span><select id="co-ref-preset"></select></label><label class="co-field"><span>预设名称</span><input id="co-ref-preset-name" placeholder="例如：主角常服"></label></div><div class="co-profile-actions"><button class="co-mini" id="co-ref-preset-new" type="button">新建</button><button class="co-mini co-test" id="co-ref-preset-save" type="button">保存修改</button><button class="co-mini co-danger" id="co-ref-preset-delete" type="button">删除</button><button class="co-mini" id="co-import-refs" type="button">导入预设库</button><input id="co-import-refs-file" type="file" accept="application/json,.json" hidden><button class="co-mini" id="co-export-refs" type="button">导出预设库</button></div><div class="co-ref-preset-state" id="co-ref-preset-state">正在读取预设…</div></div><div id="co-refs"></div></div>
@@ -3965,7 +4019,11 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         try {
             const parsed = JSON.parse(await file.text()); if (parsed.kind && parsed.kind !== kind) throw new Error(`这是 ${parsed.kind} 实例集，不能导入到 ${kind}`);
             const source = Array.isArray(parsed) ? parsed : parsed?.profiles; if (!Array.isArray(source) || !source.length) throw new Error('JSON 中没有 profiles 实例数组');
-            const profiles = source.map((item, index) => ({ id: newId(), name: String(item?.name || `${kind} API ${index + 1}`), config: merge(defaults[kind], item?.config || {}) }));
+            const profiles = source.map((item, index) => {
+                const config = merge(defaults[kind], item?.config || {});
+                if (kind === 'adaptation') config.systemPrompt = upgradeAdaptationClosedWorld(config.systemPrompt || DEFAULT_ADAPTATION_SYSTEM_PROMPT);
+                return { id: newId(), name: String(item?.name || `${kind} API ${index + 1}`), config };
+            });
             if (!confirm(`导入会覆盖当前 ${settings.apiProfiles[kind].length} 个实例，确定继续？`)) return;
             settings.apiProfiles[kind] = profiles; settings.activeApiProfile[kind] = profiles[0].id; settings[kind] = clone(profiles[0].config); save(); fillApiUi(kind); notify(`已导入 ${profiles.length} 个 API 实例`, 'success');
         } catch (error) { notify(`API 实例导入失败：${error.message}`, 'error'); }
@@ -4295,7 +4353,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
     function syncSettingsFromUi() {
-        syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.batchDrawingMaxConcurrency = normalizeBatchDrawingMaxConcurrency(val('co-batch-drawing-max-concurrency')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, 20); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
+        syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.batchDrawingMaxConcurrency = normalizeBatchDrawingMaxConcurrency(val('co-batch-drawing-max-concurrency')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, ADAPTATION_MAX_TOTAL_PAGES); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.autoRetry = normalizeAutoRetry({ enabled: checked('co-auto-retry-enabled'), mode: val('co-auto-retry-mode'), maxRetries: val('co-auto-retry-count'), intervalMs: val('co-auto-retry-interval') });
         settings.interaction.doubleClickRedraw = checked('co-enable-redraw');
         settings.interaction.doubleClickImmediate = checked('co-enable-immediate-work');
@@ -4666,7 +4724,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             outputLanguage: normalizeOutputLanguage(settings.outputLanguage),
             workflowMode: settings.workflowMode === 'interpretive' ? 'interpretive' : 'direct',
             preflightNeutralize: Boolean(settings.preflightNeutralize),
-            interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, 20),
+            interpretivePageRange: normalizeStoryboardRange(settings.interpretivePageRange?.min, settings.interpretivePageRange?.max, 2, 8, ADAPTATION_MAX_TOTAL_PAGES),
             storyboardWorkerPageRange: normalizeWorkerPageSpec(settings.storyboardWorkerPages),
             characterCardMode: characterCollection.sendMode === 'override' ? 'override' : 'off', characterCards: clone(characterCards),
             adaptationConf: { ...clone(settings.adaptation), backendMode }, storyboardConf: { ...clone(settings.storyboard), backendMode }, drawingConf: { ...clone(settings.drawing), backendMode }, refs: snapshotRefs(),
