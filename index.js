@@ -6,7 +6,7 @@
 (function comicOrbBootstrap() {
     'use strict';
 
-    const COMIC_ORB_VERSION = '1.30.0';
+    const COMIC_ORB_VERSION = '1.30.1';
     globalThis.__comicOrbExpectedVersion = COMIC_ORB_VERSION;
     const bootTrace = (stage, detail = {}) => {
         const event = { time: new Date().toISOString(), stage, detail };
@@ -3744,6 +3744,7 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
             <label class="co-field"><span>分镜工作流模式</span><select id="co-workflow-mode"><option value="direct" ${settings.workflowMode !== 'interpretive' ? 'selected' : ''}>直接分镜模式</option><option value="interpretive" ${settings.workflowMode === 'interpretive' ? 'selected' : ''}>演绎分镜模式</option></select></label>
             <label class="co-field"><span>演绎模式总页数最少</span><input id="co-interpretive-min-pages" type="number" min="1" max="200" value="${esc(settings.interpretivePageRange?.min ?? 2)}"></label>
             <label class="co-field"><span>演绎模式总页数最多</span><input id="co-interpretive-max-pages" type="number" min="1" max="200" value="${esc(settings.interpretivePageRange?.max ?? 8)}"></label>
+            <div class="co-page-budget-hint co-full" id="co-page-budget-hint" role="status" aria-live="polite"></div>
             <label class="co-field"><span>单个分镜 AI 负责页数</span><input id="co-storyboard-worker-pages" value="${esc(settings.storyboardWorkerPages || '1-3')}" placeholder="固定值如 2，或范围如 1-3"></label>
             <label class="co-field"><span>漫画对白与可见文字语言</span><input id="co-output-language" list="co-output-language-options" value="${esc(String(settings.outputLanguage || 'zh-CN'))}" placeholder="例如 zh-CN、auto、ja-JP、en-US"><datalist id="co-output-language-options"><option value="zh-CN">简体中文（默认）</option><option value="auto">跟随浏览器语言</option><option value="zh-TW">繁體中文</option><option value="zh-HK">繁體中文（香港）</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option><option value="fr-FR">français</option><option value="de-DE">Deutsch</option><option value="es-ES">español</option></datalist></label>
             <label class="co-field"><span>图片替代文字</span><input id="co-alt" value="${esc(settings.insert.alt)}"></label>
@@ -4352,6 +4353,56 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
         if (!rows.length) return;
         settings.regexList = rows.map(row => ({ enabled: row.querySelector('.co-regex-enabled').checked, pattern: row.querySelector('.co-regex-pattern input').value, flags: row.querySelector('.co-regex-flags input').value, replacement: row.querySelector('.co-regex-replacement input').value }));
     }
+    function renderInterpretivePageBudgetHint() {
+        const hint = root.querySelector('#co-page-budget-hint');
+        if (!hint) return;
+        hint.className = 'co-page-budget-hint co-full';
+        if (val('co-workflow-mode') !== 'interpretive') {
+            hint.classList.add('inactive');
+            hint.textContent = '页数基准仅用于演绎分镜模式；切换到演绎分镜后会按实际发送楼层实时计算。';
+            return;
+        }
+        try {
+            const ctx = context();
+            const { start, end } = parseRange(val('co-range') || settings.range, ctx.chat.length);
+            const excludeUsers = checked('co-exclude-user-floors');
+            let includedFloors = 0;
+            for (let floor = start; floor <= end; floor++) {
+                const message = ctx.chat[floor];
+                if (!message || (excludeUsers && message.is_user === true)) continue;
+                includedFloors++;
+            }
+            if (!includedFloors) {
+                hint.classList.add('danger');
+                hint.textContent = '当前范围没有可发送的剧情楼层，请检查楼层范围与“不发送 User 层”设置。';
+                return;
+            }
+            const pages = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, ADAPTATION_MAX_TOTAL_PAGES);
+            const recommendedMin = Math.max(1, Math.ceil(includedFloors / (excludeUsers ? 2.5 : 5)));
+            const recommendedMax = Math.max(recommendedMin, Math.ceil(includedFloors / (excludeUsers ? 2 : 4)));
+            const recommendation = recommendedMin === recommendedMax ? `${recommendedMin} 页` : `${recommendedMin}–${recommendedMax} 页`;
+            const densityText = excludeUsers ? '每页约 2–2.5 个非 User 剧情楼' : '每页约 4–5 个 User/Assistant 楼层';
+            const minDensity = (includedFloors / Math.max(1, pages.min)).toFixed(1);
+            const maxDensity = (includedFloors / Math.max(1, pages.max)).toFixed(1);
+            const prefix = `预计发送 ${includedFloors} 楼；基准建议 ${recommendation}（${densityText}）。当前 ${pages.min}–${pages.max} 页：取最低值约 ${minDensity} 楼/页，取最高值约 ${maxDensity} 楼/页。`;
+            if (pages.max < recommendedMin) {
+                hint.classList.add('danger');
+                hint.textContent = `${prefix} 当前最大页数明显不足，容易丢失支线、谈判、反转和重复战斗。`;
+            } else if (pages.min < recommendedMin) {
+                hint.classList.add('danger');
+                hint.textContent = `${prefix} 最低页数偏低，演绎 AI 可以合法提前收工；建议把最少页数提高到 ${recommendedMin} 左右。`;
+            } else if (pages.min > recommendedMax) {
+                hint.classList.add('caution');
+                hint.textContent = `${prefix} 页数高于常规基准，适合慢节奏细化，但会增加分镜调用量、耗时与失败概率。`;
+            } else {
+                hint.classList.add('ok');
+                hint.textContent = `${prefix} 当前范围处于建议容量内。`;
+            }
+        } catch (error) {
+            hint.classList.add('danger');
+            hint.textContent = `无法计算页数基准：${error?.message || String(error)}`;
+        }
+    }
     function syncSettingsFromUi() {
         syncRegexFromUi(); syncCharacterCardsFromUi(); settings.backendMode = val('co-backend-mode') === 'full' ? 'full' : 'basic'; settings.range = val('co-range'); settings.outputLanguage = val('co-output-language').trim() || 'zh-CN'; settings.workflowMode = val('co-workflow-mode') === 'interpretive' ? 'interpretive' : 'direct'; settings.batchDrawingIntervalMs = normalizeBatchDrawingInterval(val('co-batch-drawing-interval')); settings.batchDrawingMaxConcurrency = normalizeBatchDrawingMaxConcurrency(val('co-batch-drawing-max-concurrency')); settings.interpretivePageRange = normalizeStoryboardRange(val('co-interpretive-min-pages'), val('co-interpretive-max-pages'), 2, 8, ADAPTATION_MAX_TOTAL_PAGES); settings.storyboardWorkerPages = normalizeWorkerPageSpec(val('co-storyboard-worker-pages')).spec; settings.includeNames = checked('co-names'); settings.excludeUserFloors = checked('co-exclude-user-floors'); settings.includeMvuData = checked('co-include-mvu'); settings.preflightNeutralize = checked('co-preflight-neutralize'); settings.regexAssistantGuide = val('co-regex-ai-guide').trim() || settings.regexAssistantGuide || DEFAULT_REGEX_ASSISTANT_GUIDE; settings.characterAssistantGuide = val('co-character-ai-guide').trim() || settings.characterAssistantGuide || DEFAULT_CHARACTER_ASSISTANT_GUIDE; settings.insert.enabled = checked('co-insert-into-floor'); settings.insert.alt = val('co-alt'); settings.debug.enabled = checked('co-debug-enabled'); settings.debug.captureModelIo = checked('co-capture-model-io');
         settings.autoRetry = normalizeAutoRetry({ enabled: checked('co-auto-retry-enabled'), mode: val('co-auto-retry-mode'), maxRetries: val('co-auto-retry-count'), intervalMs: val('co-auto-retry-interval') });
@@ -4840,6 +4891,12 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     root.querySelector('#co-fab').addEventListener('click', e => { if (root.querySelector('#co-fab').dataset.dragged === '1') return; const panel = root.querySelector('#co-panel'); panel.classList.toggle('open'); if (panel.classList.contains('open')) void checkLocalProxyStatus(); });
     root.querySelector('#co-close').addEventListener('click', () => root.querySelector('#co-panel').classList.remove('open'));
     root.querySelector('#co-run').addEventListener('click', run);
+    for (const id of ['co-range', 'co-interpretive-min-pages', 'co-interpretive-max-pages']) {
+        root.querySelector(`#${id}`).addEventListener('input', renderInterpretivePageBudgetHint);
+    }
+    for (const id of ['co-workflow-mode', 'co-exclude-user-floors']) {
+        root.querySelector(`#${id}`).addEventListener('change', renderInterpretivePageBudgetHint);
+    }
     root.querySelector('#co-import-refs').addEventListener('click', () => root.querySelector('#co-import-refs-file').click());
     root.querySelector('#co-import-refs-file').addEventListener('change', event => importReferencePresets(event.target.files?.[0]));
     root.querySelector('#co-export-refs').addEventListener('click', () => exportReferencePresets().catch(error => notify(error.message, 'error')));
@@ -5098,12 +5155,13 @@ ${STORYBOARD_AGE_NEUTRAL_APPEARANCE_RULE}`;
     addEventListener('resize', () => scheduleFloatingUiClamp('window-resize'), { passive: true });
     addEventListener('orientationchange', () => { scheduleFloatingUiClamp('orientation-change'); setTimeout(() => clampFloatingUi('orientation-settled'), 350); }, { passive: true });
     globalThis.visualViewport?.addEventListener('resize', () => scheduleFloatingUiClamp('visual-viewport-resize'), { passive: true });
-    renderRegexList(); renderCharacterCards(); renderAutoRetrySettings(); renderRunCooldown(); refreshLogs().catch(() => {});
+    renderRegexList(); renderCharacterCards(); renderAutoRetrySettings(); renderRunCooldown(); renderInterpretivePageBudgetHint(); refreshLogs().catch(() => {});
     try {
         const stContext = context();
         const chatChangedEvent = stContext.eventTypes?.CHAT_CHANGED;
         if (chatChangedEvent) stContext.eventSource?.on?.(chatChangedEvent, () => {
             renderCharacterCards();
+            renderInterpretivePageBudgetHint();
         });
     } catch {}
     initializeComicMediaActions();
